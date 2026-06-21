@@ -1,0 +1,24 @@
+.DS_Store
+.build/
+dist/
+outputs/
+work/
+
+# CMake and JUCE build output
+**/build/
+**/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Built plug-ins and debug symbols
+*.app/
+*.component/
+*.dSYM/
+
+# Editors and local Codex state
+.codex/
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a reproducible Chordizer problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Chordizer MIDI FX
+        - Chordizer Audio
+        - Shared session or both components
+        - Build or installation
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, host and version, CPU architecture
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Chord sequence or fixture
+      description: Include expected and detected chords. Attach only audio or MIDI you may redistribute.
