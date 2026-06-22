@@ -46,6 +46,7 @@ bool ChordTrackerProcessor::isBusesLayoutSupported(const BusesLayout& layouts) c
 
 bool ChordTrackerProcessor::readHost(double& ppq,double& bpm,int& numerator,int& denominator,bool& playing) const
 {
+    if(audioThreadID.load(std::memory_order_relaxed)!=juce::Thread::getCurrentThreadId()) return false;
     auto* head=getPlayHead(); if(head==nullptr) return false;
     auto position=head->getPosition(); if(!position) return false;
     playing=position->getIsPlaying();
@@ -121,6 +122,7 @@ bool ChordTrackerProcessor::analyzeAudio(const juce::AudioBuffer<float>& buffer,
 void ChordTrackerProcessor::processBlock(juce::AudioBuffer<float>& buffer,juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals guard;
+    audioThreadID.store(juce::Thread::getCurrentThreadId(),std::memory_order_relaxed);
 #if CHORDIZER_AUDIO_FX
     juce::ignoreUnused(midi);
 #else

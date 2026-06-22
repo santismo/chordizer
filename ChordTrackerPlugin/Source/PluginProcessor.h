@@ -62,6 +62,7 @@ private:
     std::atomic<int> timelineEditorWidth { 980 }, timelineEditorHeight { 320 };
     std::atomic<int> leadEditorWidth { 980 }, leadEditorHeight { 560 };
     std::atomic<double> timelineZoom { 16.0 }, timelineScroll { 0.0 };
+    std::atomic<juce::Thread::ThreadID> audioThreadID { nullptr };
     uint64_t instanceID = 0;
     double sampleRate = 44100.0, lastPublishPpq = -1000.0;
     std::array<float,12> audioWeights{}, audioKeyWeights{};
