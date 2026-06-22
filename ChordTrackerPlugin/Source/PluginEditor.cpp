@@ -200,7 +200,7 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
 
     initialising = false;
     persistEditorState();
-    startTimerHz(60);
+    startTimerHz(30);
 }
 
 juce::Rectangle<int> ChordTrackerEditor::contentBounds() const
@@ -264,16 +264,30 @@ void ChordTrackerEditor::setLeadSheetSingleColumn(bool enabled)
 
 void ChordTrackerEditor::timerCallback()
 {
-    chordProcessor.refreshTransportFromHost();
     auto next = chordProcessor.sessionSnapshot();
     const auto playheadMoved=std::abs(next.playheadPpq-snapshot.playheadPpq)>0.0001;
-    if (!leadSheet && (next.playing||playheadMoved))
+    bool viewportChanged=false;
+    if (!leadSheet && next.playing)
     {
         const auto visiblePpq=timelineZoomBars*juce::jmax(1,next.numerator);
         const auto followedStart=juce::jmax(0.0,next.playheadPpq-visiblePpq*0.36);
         if(std::abs(followedStart-timelineScrollPpq)>visiblePpq*0.0001)
         {
             timelineScrollPpq=followedStart;
+            viewportChanged=true;
+            persistEditorState();
+        }
+    }
+    else if (!leadSheet && playheadMoved)
+    {
+        const auto visiblePpq=timelineZoomBars*juce::jmax(1,next.numerator);
+        const auto leftGuard=timelineScrollPpq+visiblePpq*0.08;
+        const auto rightGuard=timelineScrollPpq+visiblePpq;
+        if(next.playheadPpq<leftGuard||next.playheadPpq>rightGuard)
+        {
+            const auto followedStart=juce::jmax(0.0,next.playheadPpq-visiblePpq*0.36);
+            timelineScrollPpq=followedStart;
+            viewportChanged=true;
             persistEditorState();
         }
     }
@@ -291,11 +305,13 @@ void ChordTrackerEditor::timerCallback()
                                           ? juce::jmax(0, currentMeasure - visibleMeasures / 2)
                                           : (currentMeasure / visibleMeasures) * visibleMeasures;
             timelineScrollPpq = desiredFirst * beats;
+            viewportChanged=true;
             persistEditorState();
         }
     }
 
-    if (next.revision != snapshot.revision || std::abs(next.playheadPpq - snapshot.playheadPpq) > 0.001)
+    if (next.revision != snapshot.revision || std::abs(next.playheadPpq - snapshot.playheadPpq) > 0.001
+        || viewportChanged)
     {
         snapshot = std::move(next);
         if(selectionAnchor.has_value()&&*selectionAnchor>=snapshot.regions.size())clearRangeSelection();
