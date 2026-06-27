@@ -34,6 +34,8 @@ public:
     void deleteRegion(size_t index) { SharedChordSession::instance().deleteRegion(index); }
     bool resizeRegion(size_t index,double startPpq,double endPpq)
         { return SharedChordSession::instance().resizeRegion(index,startPpq,endPpq); }
+    bool quantizeRegion(size_t index,double gridPpq)
+        { return SharedChordSession::instance().quantizeRegion(index,gridPpq); }
     bool extendRegionToNext(size_t index) { return SharedChordSession::instance().extendRegionToNext(index); }
     void replaceRegions(const std::vector<ChordRegionData>& regions) { SharedChordSession::instance().replaceRegions(regions); }
     void setTextScale(bool leadSheet,float scale) { SharedChordSession::instance().setTextScale(leadSheet,scale); }

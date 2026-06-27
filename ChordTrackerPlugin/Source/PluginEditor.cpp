@@ -110,6 +110,14 @@ void ChordizerIconButton::paintButton(juce::Graphics& graphics,bool highlighted,
         case Icon::copy:
             graphics.drawRoundedRectangle(x+w*0.08f,y+h*0.18f,w*0.62f,h*0.68f,1.0f,1.5f);
             graphics.drawRoundedRectangle(x+w*0.30f,y+h*0.05f,w*0.62f,h*0.68f,1.0f,1.5f);break;
+        case Icon::quantize:
+            for(int i=0;i<4;++i)
+                graphics.drawVerticalLine((int)(x+w*(0.18f+i*0.21f)),y+h*0.10f,y+h*0.90f);
+            graphics.drawLine(x+w*0.08f,y+h*0.68f,x+w*0.92f,y+h*0.68f,1.4f);
+            path.startNewSubPath(x+w*0.20f,y+h*0.34f);path.lineTo(x+w*0.41f,y+h*0.34f);path.lineTo(x+w*0.41f,y+h*0.55f);
+            graphics.strokePath(path,stroke);
+            path.clear();path.startNewSubPath(x+w*0.66f,y+h*0.34f);path.lineTo(x+w*0.50f,y+h*0.34f);path.lineTo(x+w*0.50f,y+h*0.55f);
+            graphics.strokePath(path,stroke);break;
         case Icon::undo:
         case Icon::redo:
         {
@@ -149,7 +157,7 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     }
 
     for (auto* button : { &viewButton, &leadZoomButton, &editButton,
-                          &smallerTextButton, &largerTextButton, &listenButton, &clearButton, &copyButton,
+                          &smallerTextButton, &largerTextButton, &listenButton, &clearButton, &copyButton, &quantizeButton,
                           &undoButton, &redoButton })
     {
         addAndMakeVisible(button);
@@ -163,6 +171,7 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     listenButton.setTooltip("Listen for chords");
     clearButton.setTooltip("Clear chord regions");
     copyButton.setTooltip("Copy selected chord names");
+    quantizeButton.setTooltip("Quantize selected chord start and end to the nearest 1/16 note");
     undoButton.setTooltip("Undo chord edit");
     redoButton.setTooltip("Redo chord edit");
 
@@ -187,6 +196,7 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     listenButton.setTooltip("Listen for chords\n"+analysisStatus);
     clearButton.onClick = [this] { performRegionEdit([this]{chordProcessor.clearSession();});clearRangeSelection(); };
     copyButton.onClick = [this] { copySelectedChordNames(); };
+    quantizeButton.onClick = [this] { quantizeSelectedRegions(0.25); };
     undoButton.onClick = [this] { undoRegionEdit(); };
     redoButton.onClick = [this] { redoRegionEdit(); };
 
@@ -682,6 +692,19 @@ std::vector<ChordRegionData> ChordTrackerEditor::selectedRegions() const
             snapshot.regions.begin()+(std::ptrdiff_t)last+1};
 }
 
+void ChordTrackerEditor::quantizeSelectedRegions(double gridPpq)
+{
+    if(!selectionAnchor.has_value()||snapshot.regions.empty())return;
+    const auto other=selectionEnd.value_or(*selectionAnchor);
+    const auto first=juce::jmin(*selectionAnchor,other),last=juce::jmin(juce::jmax(*selectionAnchor,other),snapshot.regions.size()-1);
+    performRegionEdit([this,first,last,gridPpq]
+    {
+        for(auto index=first;index<=last;++index)
+            chordProcessor.quantizeRegion(index,gridPpq);
+    });
+    repaint();
+}
+
 void ChordTrackerEditor::beginMidiDrag()
 {
     const auto regions=selectedRegions();
@@ -763,6 +786,8 @@ void ChordTrackerEditor::showRegionMenu(size_t index,const juce::MouseEvent& eve
     menu.addSeparator();
     menu.addItem(2,"Edit name");
     menu.addItem(3,"Delete region");
+    menu.addItem(4,"Quantize start/end 1/16");
+    menu.addItem(5,"Quantize start/end 1/32");
     auto anchor=regionBounds(index);
     if(anchor.isEmpty())anchor=juce::Rectangle<int>(event.getPosition().x,event.getPosition().y,1,1);
     const auto position=anchor.getCentre().withY(anchor.getBottom()+14);
@@ -789,6 +814,12 @@ void ChordTrackerEditor::showRegionMenu(size_t index,const juce::MouseEvent& eve
         {
             safe->editingRegion.reset();safe->chordNameEditor.setVisible(false);
             safe->performRegionEdit([safe,index]{if(safe!=nullptr)safe->chordProcessor.deleteRegion(index);});
+        }
+        else if(result==4||result==5)
+        {
+            safe->editingRegion.reset();safe->chordNameEditor.setVisible(false);
+            const auto grid=result==4?0.25:0.125;
+            safe->performRegionEdit([safe,index,grid]{if(safe!=nullptr)safe->chordProcessor.quantizeRegion(index,grid);});
         }
         else if(result>=100&&result<100+region.alternatives.size())
         {
@@ -957,7 +988,7 @@ void ChordTrackerEditor::resized()
     auto controls = getLocalBounds().removeFromTop(headerHeight).reduced(6, 5);
     constexpr int buttonWidth = 24;
     for (auto* button : { &viewButton, &editButton, &smallerTextButton, &largerTextButton,
-                          &listenButton, &clearButton, &copyButton, &undoButton, &redoButton })
+                          &listenButton, &clearButton, &copyButton, &quantizeButton, &undoButton, &redoButton })
     {
         button->setBounds(controls.removeFromLeft(buttonWidth));
         controls.removeFromLeft(4);

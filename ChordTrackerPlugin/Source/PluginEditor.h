@@ -6,7 +6,7 @@
 class ChordizerIconButton final : public juce::Button
 {
 public:
-    enum class Icon { view, oneMeasure, edit, smaller, larger, listen, clear, copy, undo, redo };
+    enum class Icon { view, oneMeasure, edit, smaller, larger, listen, clear, copy, quantize, undo, redo };
     explicit ChordizerIconButton(Icon iconToUse) : juce::Button(juce::String()), icon(iconToUse) {}
     void paintButton(juce::Graphics&,bool highlighted,bool down) override;
 private:
@@ -59,6 +59,7 @@ private:
     void clearRangeSelection();
     void copySelectedChordNames();
     std::vector<ChordRegionData> selectedRegions() const;
+    void quantizeSelectedRegions(double gridPpq);
     void beginMidiDrag();
     void deleteSelectedRegions();
     void performRegionEdit(const std::function<void()>& action);
@@ -75,6 +76,7 @@ private:
     ChordizerIconButton listenButton{ChordizerIconButton::Icon::listen};
     ChordizerIconButton clearButton{ChordizerIconButton::Icon::clear};
     ChordizerIconButton copyButton{ChordizerIconButton::Icon::copy};
+    ChordizerIconButton quantizeButton{ChordizerIconButton::Icon::quantize};
     ChordizerIconButton undoButton{ChordizerIconButton::Icon::undo};
     ChordizerIconButton redoButton{ChordizerIconButton::Icon::redo};
     ChordNameEditor chordNameEditor;
