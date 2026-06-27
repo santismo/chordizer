@@ -290,6 +290,37 @@ bool SharedChordSession::resizeRegion(size_t index,double startPpq,double endPpq
     ++revision;return true;
 }
 
+bool SharedChordSession::quantizeRegion(size_t index,double gridPpq)
+{
+    constexpr double minimumDuration=0.03125;
+    const auto grid=juce::jlimit(0.03125,4.0,gridPpq);
+    const auto snap=[grid](double value){return juce::jmax(0.0,std::round(value/grid)*grid);};
+    const auto apply=[&](auto& list,size_t count)
+    {
+        if(index>=count)return false;
+        auto start=snap(list[index].startPpq);
+        auto end=snap(list[index].endPpq);
+        if(end<start+minimumDuration)end=start+minimumDuration;
+        const auto minimumStart=index>0?list[index-1].endPpq:0.0;
+        const auto maximumEnd=index+1<count?list[index+1].startPpq:std::numeric_limits<double>::max();
+        start=juce::jlimit(minimumStart,juce::jmax(minimumStart,maximumEnd-minimumDuration),start);
+        end=juce::jlimit(start+minimumDuration,maximumEnd,end);
+        if(std::abs(list[index].startPpq-start)<0.000001
+           &&std::abs(list[index].endPpq-end)<0.000001)return false;
+        list[index].startPpq=start;list[index].endPpq=end;list[index].locked=1;
+        return true;
+    };
+    if(auto* wire=(SharedSessionWire*)sharedMemory)
+    {
+        WireLock lock(wire);if(!lock.locked)return false;
+        if(!apply(wire->regions,wire->regionCount))return false;
+        ++wire->revision;return true;
+    }
+    std::lock_guard lock(mutex);
+    if(!apply(regions,regions.size()))return false;
+    ++revision;return true;
+}
+
 bool SharedChordSession::extendRegionToNext(size_t index)
 {
     const auto apply=[&](auto& list,size_t count)

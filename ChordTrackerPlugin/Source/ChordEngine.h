@@ -70,6 +70,7 @@ public:
     void renameRegion(size_t index, const juce::String& name);
     void deleteRegion(size_t index);
     bool resizeRegion(size_t index, double startPpq, double endPpq);
+    bool quantizeRegion(size_t index, double gridPpq);
     bool extendRegionToNext(size_t index);
     void replaceRegions(const std::vector<ChordRegionData>& replacement);
     void replaceAudioRegions(double startPpq, double endPpq,
