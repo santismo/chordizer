@@ -128,3 +128,59 @@ bool writeChordizerMidiFile(const std::vector<ChordRegionData>& regions,double b
     if(!output.openedOk())return false;
     return createChordizerMidiFile(regions,bpm,numerator,denominator).writeTo(output,1);
 }
+
+double scalizerRecordingBarOrigin(const ScalizerRecordingTake& take) noexcept
+{
+    if(take.firstPpq<0.0)return 0.0;
+    const auto barLength=juce::jmax(0.0625,(double)juce::jmax(1,take.numerator)*4.0
+                                             /(double)juce::jmax(1,take.denominator));
+    return juce::jmax(0.0,std::floor((take.firstPpq+1.0e-9)/barLength)*barLength);
+}
+
+juce::MidiFile createScalizerRecordingMidiFile(const ScalizerRecordingTake& take)
+{
+    juce::MidiFile file;file.setTicksPerQuarterNote(chordizerMidiTicksPerQuarterNote);
+    if(take.events.empty())return file;
+    const auto origin=scalizerRecordingBarOrigin(take);
+    juce::MidiMessageSequence track;
+    auto trackName=juce::MidiMessage::textMetaEvent(3,"Chordizer Scalizer Take");
+    trackName.setTimeStamp(0.0);track.addEvent(trackName);
+    auto tempo=juce::MidiMessage::tempoMetaEvent((int)std::llround(60000000.0/juce::jlimit(1.0,999.0,take.bpm)));
+    tempo.setTimeStamp(0.0);track.addEvent(tempo);
+    auto signature=juce::MidiMessage::timeSignatureMetaEvent(juce::jmax(1,take.numerator),
+                                                              juce::jmax(1,take.denominator));
+    signature.setTimeStamp(0.0);track.addEvent(signature);
+
+    std::array<std::array<int,128>,16> activeNotes {};
+    auto lastTick=0.0;
+    for(const auto& recorded:take.events)
+    {
+        if(recorded.size<1||recorded.size>3)continue;
+        const auto tick=(double)juce::jmax<int64_t>(0,std::llround((recorded.ppq-origin)*chordizerMidiTicksPerQuarterNote));
+        juce::MidiMessage message(recorded.data.data(),(int)recorded.size,tick);
+        if(message.getChannel()>=1&&message.getChannel()<=16)
+        {
+            auto& active=activeNotes[(size_t)(message.getChannel()-1)][(size_t)message.getNoteNumber()];
+            if(message.isNoteOn())++active;
+            else if(message.isNoteOff()&&active>0)--active;
+        }
+        track.addEvent(message);lastTick=juce::jmax(lastTick,tick);
+    }
+    const auto takeEnd=take.endPpq>=0.0?take.endPpq:take.events.back().ppq;
+    const auto closingTick=(double)juce::jmax<int64_t>((int64_t)lastTick+1,
+        std::llround((takeEnd-origin)*chordizerMidiTicksPerQuarterNote));
+    for(int channel=0;channel<16;++channel)for(int note=0;note<128;++note)
+        for(int outstanding=0;outstanding<activeNotes[(size_t)channel][(size_t)note];++outstanding)
+        {
+            auto off=juce::MidiMessage::noteOff(channel+1,note);off.setTimeStamp(closingTick);track.addEvent(off);
+        }
+    auto end=juce::MidiMessage::endOfTrack();end.setTimeStamp(closingTick+1.0);track.addEvent(end);
+    track.sort();file.addTrack(track);return file;
+}
+
+bool writeScalizerRecordingMidiFile(const ScalizerRecordingTake& take,const juce::File& destination)
+{
+    if(take.events.empty()||!destination.getParentDirectory().createDirectory())return false;
+    destination.deleteFile();juce::FileOutputStream output(destination);
+    return output.openedOk()&&createScalizerRecordingMidiFile(take).writeTo(output,1);
+}

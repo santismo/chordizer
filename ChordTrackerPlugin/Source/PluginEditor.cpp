@@ -1,24 +1,145 @@
 #include "PluginEditor.h"
 #include "MidiExport.h"
+#include "MidiImport.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 
 namespace
 {
-const auto background = juce::Colour(0xff111416);
-const auto panel = juce::Colour(0xff1b2023);
-const auto cyan = juce::Colour(0xff38d6c7);
-const auto playhead = juce::Colour(0xffff5263);
+juce::Colour background(0xff111416);
+juce::Colour panel(0xff1b2023);
+juce::Colour cyan(0xff38d6c7);
+juce::Colour playhead(0xffff5263);
+juce::Colour buttonSurface(0xff272d31);
 constexpr int headerHeight = 34;
-
-const std::array<juce::Colour, 20> chordPalette {
+std::array<juce::Colour, 20> chordPalette {
     juce::Colour(0xff2dd4bf), juce::Colour(0xffffc857), juce::Colour(0xffff6b6b), juce::Colour(0xff60a5fa),
     juce::Colour(0xff84cc16), juce::Colour(0xffe879f9), juce::Colour(0xffff8a4c), juce::Colour(0xff22d3ee),
     juce::Colour(0xffa78bfa), juce::Colour(0xfff43f5e), juce::Colour(0xff34d399), juce::Colour(0xfffacc15),
     juce::Colour(0xff818cf8), juce::Colour(0xfffb7185), juce::Colour(0xff4ade80), juce::Colour(0xffc084fc),
     juce::Colour(0xfff97316), juce::Colour(0xff38bdf8), juce::Colour(0xffa3e635), juce::Colour(0xfff472b6)
 };
+
+constexpr int activePlayerSkinIndex = 0;
+
+float playerInterfacePhase()
+{
+    return static_cast<float>(std::fmod(juce::Time::getMillisecondCounterHiRes()*0.00008,1.0));
+}
+
+bool squarePlayerInterface()
+{
+    return activePlayerSkinIndex==4||activePlayerSkinIndex==9;
+}
+
+float playerCorner()
+{
+    return squarePlayerInterface()?0.0f:(activePlayerSkinIndex==3?10.0f:3.0f);
+}
+
+void drawPlayerTexture(juce::Graphics& graphics,juce::Rectangle<float> bounds,float alpha=1.0f)
+{
+    switch(activePlayerSkinIndex)
+    {
+        case 0:
+            for(float y=bounds.getY();y<bounds.getBottom();y+=3.0f)
+            {
+                graphics.setColour(juce::Colours::white.withAlpha(((static_cast<int>(y)%9==0)?0.045f:0.018f)*alpha));
+                graphics.drawHorizontalLine((int)y,bounds.getX(),bounds.getRight());
+            }
+            break;
+        case 1:
+            graphics.setColour(cyan.withAlpha(0.11f*alpha));
+            for(float x=bounds.getX();x<bounds.getRight();x+=12.0f)graphics.drawVerticalLine((int)x,bounds.getY(),bounds.getBottom());
+            for(float y=bounds.getY();y<bounds.getBottom();y+=8.0f)graphics.drawHorizontalLine((int)y,bounds.getX(),bounds.getRight());
+            break;
+        case 4:
+            for(float y=bounds.getY()+3.0f;y<bounds.getBottom();y+=7.0f)for(float x=bounds.getX()+3.0f;x<bounds.getRight();x+=7.0f)
+            {
+                graphics.setColour(cyan.withAlpha(0.05f*alpha));graphics.fillRect(x,y,2.0f,2.0f);
+            }
+            break;
+        case 2:
+            for(float y=bounds.getY();y<bounds.getBottom();y+=15.0f)
+            {
+                graphics.setGradientFill(juce::ColourGradient(juce::Colours::white.withAlpha(0.11f*alpha),bounds.getX(),y,
+                                                               juce::Colours::black.withAlpha(0.11f*alpha),bounds.getX(),y+15.0f,false));
+                graphics.fillRect(bounds.getX(),y,bounds.getWidth(),15.0f);
+            }
+            break;
+        case 7:
+            graphics.setColour(cyan.withAlpha(0.045f*alpha));
+            for(float x=bounds.getX();x<bounds.getRight();x+=10.0f)graphics.drawVerticalLine((int)x,bounds.getY(),bounds.getBottom());
+            graphics.setColour(cyan.withAlpha(0.23f*alpha));
+            {
+                juce::Path trace;trace.startNewSubPath(bounds.getX(),bounds.getCentreY());
+                for(float x=bounds.getX();x<bounds.getRight();x+=5.0f)trace.lineTo(x,bounds.getCentreY()+std::sin((x-bounds.getX())*0.11f)*bounds.getHeight()*0.18f);
+                graphics.strokePath(trace,juce::PathStrokeType(1.2f));
+            }
+            break;
+        case 3:
+            for(float x=bounds.getX();x<bounds.getRight();x+=9.0f)
+            {
+                graphics.setColour(playhead.withAlpha(0.055f*alpha));graphics.drawVerticalLine((int)x,bounds.getY(),bounds.getBottom());
+            }
+            break;
+        case 5:
+            for(float y=bounds.getY();y<bounds.getBottom();y+=3.0f)
+            {
+                graphics.setColour(juce::Colours::black.withAlpha(0.16f*alpha));
+                graphics.drawHorizontalLine((int)y,bounds.getX(),bounds.getRight());
+            }
+            break;
+        case 6:
+            graphics.setColour(playhead.withAlpha(0.09f*alpha));
+            for(float x=bounds.getX()-bounds.getHeight();x<bounds.getRight();x+=16.0f)
+                graphics.drawLine(x,bounds.getBottom(),x+bounds.getHeight(),bounds.getY(),2.0f);
+            break;
+        case 8:
+            graphics.setColour(cyan.withAlpha(0.07f*alpha));
+            for(float x=bounds.getX()-20.0f;x<bounds.getRight()+20.0f;x+=20.0f)
+            {
+                juce::Path diamond;diamond.startNewSubPath(x,bounds.getCentreY());diamond.lineTo(x+10.0f,bounds.getCentreY()-10.0f);
+                diamond.lineTo(x+20.0f,bounds.getCentreY());diamond.lineTo(x+10.0f,bounds.getCentreY()+10.0f);diamond.closeSubPath();
+                graphics.strokePath(diamond,juce::PathStrokeType(1.0f));
+            }
+            break;
+        case 9:
+            for(float y=bounds.getY()+4.0f;y<bounds.getBottom();y+=7.0f)for(float x=bounds.getX()+4.0f;x<bounds.getRight();x+=7.0f)
+            {
+                graphics.setColour(juce::Colours::white.withAlpha(0.06f*alpha));graphics.fillEllipse(x,y,1.4f,1.4f);
+            }
+            break;
+    }
+}
+
+void drawPlayerFrame(juce::Graphics& graphics,juce::Rectangle<float> bounds,const juce::String& caption)
+{
+    const auto corner=playerCorner();
+    graphics.setColour(juce::Colours::black.withAlpha(0.42f));graphics.fillRoundedRectangle(bounds.translated(0.0f,3.0f),corner);
+    graphics.setColour(panel);graphics.fillRoundedRectangle(bounds,corner);drawPlayerTexture(graphics,bounds.reduced(2.0f));
+    graphics.setColour(juce::Colours::white.withAlpha(0.25f));graphics.drawRoundedRectangle(bounds.reduced(0.5f),corner,1.0f);
+    auto display=bounds.reduced(6.0f,4.0f).removeFromTop(13.0f);
+    graphics.setColour(background.darker(0.25f));graphics.fillRoundedRectangle(display,squarePlayerInterface()?0.0f:2.0f);
+    graphics.setColour(cyan.withAlpha(0.76f));graphics.drawRoundedRectangle(display,squarePlayerInterface()?0.0f:2.0f,1.0f);
+    graphics.setColour(cyan);graphics.setFont(juce::FontOptions(8.0f,juce::Font::bold));
+    graphics.drawFittedText(caption,display.toNearestInt().reduced(4,0),juce::Justification::centredLeft,1);
+
+}
+
+void drawPlayerSpectrum(juce::Graphics& graphics,juce::Rectangle<float> bounds)
+{
+    const auto phase=playerInterfacePhase();const auto bars=juce::jmax(8,(int)(bounds.getWidth()/8.0f));const auto width=bounds.getWidth()/(float)bars;
+    graphics.setColour(background.darker(0.25f));graphics.fillRect(bounds);
+    for(int i=0;i<bars;++i)
+    {
+        const auto energy=0.20f+0.75f*std::abs(std::sin(phase*10.0f+(float)i*(0.37f+activePlayerSkinIndex*0.02f)));
+        const auto height=bounds.getHeight()*energy;
+        graphics.setColour((i%5==0?playhead:cyan).withAlpha(0.88f));
+        graphics.fillRect(bounds.getX()+i*width+1.0f,bounds.getBottom()-height,juce::jmax(1.0f,width-2.0f),height);
+    }
+}
 
 std::vector<size_t> regionColourIndices(const ChordSessionSnapshot& session)
 {
@@ -51,16 +172,24 @@ juce::PropertiesFile& globalSettings()
     }());
     return settings;
 }
+
+juce::String intervalName(int degree)
+{
+    static const std::array<const char*,9> names {"","","2nd","3rd","4th","5th","6th","7th","octave"};
+    return degree>=2&&degree<=8?names[(size_t)degree]:juce::String(degree);
+}
 }
 
 void ChordizerIconButton::paintButton(juce::Graphics& graphics,bool highlighted,bool down)
 {
     auto area=getLocalBounds().toFloat().reduced(1.0f);
-    auto fill=getToggleState()?cyan.withAlpha(0.78f):juce::Colour(0xff272d31);
+    auto fill=getToggleState()?cyan.withAlpha(0.78f):buttonSurface;
     if(highlighted)fill=fill.brighter(0.10f);
     if(down)fill=fill.darker(0.12f);
     if(!isEnabled())fill=fill.withAlpha(0.35f);
-    graphics.setColour(fill);graphics.fillRoundedRectangle(area,4.0f);
+    graphics.setColour(juce::Colours::black.withAlpha(0.30f));graphics.fillRoundedRectangle(area.translated(0.0f,2.0f),3.0f);
+    graphics.setColour(fill);graphics.fillRoundedRectangle(area,3.0f);
+    graphics.setColour(cyan.withAlpha(0.74f));graphics.drawRoundedRectangle(area,3.0f,1.0f);
     graphics.setColour(getToggleState()?juce::Colours::black
                                        :juce::Colours::white.withAlpha(isEnabled()?0.82f:0.32f));
     auto box=area.reduced(6.0f);const auto x=box.getX(),y=box.getY(),w=box.getWidth(),h=box.getHeight();
@@ -101,6 +230,13 @@ void ChordizerIconButton::paintButton(juce::Graphics& graphics,bool highlighted,
             path.lineTo(x+w*0.31f,y+h*0.18f);path.lineTo(x+w*0.48f,y+h*0.82f);
             path.lineTo(x+w*0.64f,y+h*0.30f);path.lineTo(x+w*0.78f,y+h*0.62f);path.lineTo(x+w,y+h*0.62f);
             graphics.strokePath(path,stroke);break;
+        case Icon::importMidi:
+            graphics.drawRoundedRectangle(x+w*0.12f,y+h*0.62f,w*0.76f,h*0.28f,1.5f,1.6f);
+            graphics.drawLine(x+w*0.50f,y+h*0.08f,x+w*0.50f,y+h*0.55f,2.0f);
+            path.startNewSubPath(x+w*0.30f,y+h*0.38f);
+            path.lineTo(x+w*0.50f,y+h*0.59f);
+            path.lineTo(x+w*0.70f,y+h*0.38f);
+            graphics.strokePath(path,stroke);break;
         case Icon::clear:
             graphics.drawRoundedRectangle(x+w*0.24f,y+h*0.25f,w*0.52f,h*0.66f,1.0f,1.6f);
             graphics.drawLine(x+w*0.16f,y+h*0.20f,x+w*0.84f,y+h*0.20f,1.7f);
@@ -131,6 +267,31 @@ void ChordizerIconButton::paintButton(juce::Graphics& graphics,bool highlighted,
             arrow.lineTo(reverse?endX+w*0.28f:endX-w*0.28f,y+h*0.35f);
             arrow.lineTo(reverse?endX+w*0.08f:endX-w*0.08f,y+h*0.67f);arrow.closeSubPath();graphics.fillPath(arrow);break;
         }
+        case Icon::scalizer:
+        {
+            const std::array<float,3> noteX { 0.18f, 0.50f, 0.82f };
+            const std::array<float,3> noteY { 0.72f, 0.50f, 0.28f };
+            for(size_t index=0;index<noteX.size();++index)
+            {
+                graphics.fillEllipse(x+w*(noteX[index]-0.10f),y+h*(noteY[index]-0.10f),w*0.20f,h*0.20f);
+                graphics.drawLine(x+w*(noteX[index]+0.08f),y+h*noteY[index],
+                                  x+w*(noteX[index]+0.08f),y+h*(noteY[index]-0.33f),1.5f);
+            }
+            graphics.drawLine(x+w*0.12f,y+h*0.86f,x+w*0.88f,y+h*0.14f,1.4f);break;
+        }
+        case Icon::harmony:
+        {
+            const std::array<float,3> noteX { 0.22f, 0.52f, 0.82f };
+            const std::array<float,3> noteY { 0.70f, 0.48f, 0.29f };
+            for(size_t index=0;index<noteX.size();++index)
+            {
+                graphics.fillEllipse(x+w*(noteX[index]-0.10f),y+h*(noteY[index]-0.10f),w*0.20f,h*0.20f);
+                graphics.drawLine(x+w*(noteX[index]+0.08f),y+h*noteY[index],
+                                  x+w*(noteX[index]+0.08f),y+h*(noteY[index]-0.34f),1.5f);
+            }
+            graphics.drawLine(x+w*0.30f,y+h*0.36f,x+w*0.60f,y+h*0.14f,1.7f);
+            graphics.drawLine(x+w*0.60f,y+h*0.14f,x+w*0.90f,y+h*0.14f,1.7f);break;
+        }
     }
 }
 
@@ -157,11 +318,16 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     }
 
     for (auto* button : { &viewButton, &leadZoomButton, &editButton,
-                          &smallerTextButton, &largerTextButton, &listenButton, &clearButton, &copyButton, &quantizeButton,
-                          &undoButton, &redoButton })
+                          &smallerTextButton, &largerTextButton, &listenButton, &importButton, &clearButton, &copyButton, &quantizeButton,
+                          &undoButton, &redoButton, &scalizerButton, &harmonyButton })
     {
         addAndMakeVisible(button);
     }
+    addAndMakeVisible(lockModeButton);
+    lockModeButton.setColour(juce::TextButton::buttonColourId,buttonSurface);
+    lockModeButton.setColour(juce::TextButton::buttonOnColourId,cyan.withAlpha(0.78f));
+    lockModeButton.setColour(juce::TextButton::textColourOffId,juce::Colours::white.withAlpha(0.82f));
+    lockModeButton.setColour(juce::TextButton::textColourOnId,juce::Colours::black);
 
     viewButton.setTooltip(leadSheet?"Show Timeline view":"Show Lead Sheet view");
     leadZoomButton.setTooltip("Full-width Lead Sheet measures");
@@ -169,6 +335,7 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     smallerTextButton.setTooltip("Smaller chord names in this view");
     largerTextButton.setTooltip("Larger chord names in this view");
     listenButton.setTooltip("Listen for chords");
+    importButton.setTooltip("Import MIDI at the playhead");
     clearButton.setTooltip("Clear chord regions");
     copyButton.setTooltip("Copy selected chord names");
     quantizeButton.setTooltip("Quantize selected chord start and end to the nearest 1/16 note");
@@ -194,11 +361,29 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     listenButton.onClick = [this] { chordProcessor.setListening(listenButton.getToggleState()); };
     analysisStatus=chordProcessor.analysisStatusText();
     listenButton.setTooltip("Listen for chords\n"+analysisStatus);
+    importButton.onClick = [this] { chooseMidiImportFile(); };
     clearButton.onClick = [this] { performRegionEdit([this]{chordProcessor.clearSession();});clearRangeSelection(); };
     copyButton.onClick = [this] { copySelectedChordNames(); };
     quantizeButton.onClick = [this] { quantizeSelectedRegions(0.25); };
     undoButton.onClick = [this] { undoRegionEdit(); };
     redoButton.onClick = [this] { redoRegionEdit(); };
+    scalizerButton.setClickingTogglesState(true);
+    scalizerButton.setTooltip("Constrain live MIDI to the active chord region");
+    scalizerButton.onClick=[this]
+    {
+        chordProcessor.setScalizerEnabled(scalizerButton.getToggleState());
+        updateScalizerControls();repaint();
+    };
+    lockModeButton.setTooltip("Switch between scale notes and chord tones");
+    lockModeButton.onClick=[this]
+    {
+        const auto next=chordProcessor.scalizerLockMode()==ScalizerLockMode::scale
+                        ?ScalizerLockMode::chordTones:ScalizerLockMode::scale;
+        chordProcessor.setScalizerLockMode(next);updateScalizerControls();repaint();
+    };
+    harmonyButton.setTooltip("Configure up to three diatonic harmony voices");
+    harmonyButton.onClick=[this]{showHarmonyMenu();};
+    updateScalizerControls();
 
     addAndMakeVisible(chordNameEditor);
     chordNameEditor.setVisible(false);
@@ -208,9 +393,92 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     chordNameEditor.onFocusLost=[this]{if(editingRegion.has_value()&&!quickEditMenuOpen)commitRegionEdit();};
     chordNameEditor.keyHandler=[this](const juce::KeyPress& key){return handleChordEditorKey(key);};
 
+    juce::Component::SafePointer<ChordTrackerEditor> safe(this);
+    nativeMidiDropBridge=std::make_unique<MacMidiDropBridge>(*this,
+        [safe](const MacMidiDropBridge::DropData& data)
+        {
+            return safe!=nullptr&&safe->handleNativeMidiDrop(data);
+        },
+        [safe](bool hovering)
+        {
+            if(safe!=nullptr)safe->setMidiDropHover(hovering);
+        });
+
     initialising = false;
     persistEditorState();
     startTimerHz(30);
+}
+
+ChordTrackerEditor::~ChordTrackerEditor() = default;
+
+void ChordTrackerEditor::updateScalizerControls()
+{
+    const auto supported=chordProcessor.supportsScalizer();
+    scalizerButton.setVisible(supported);lockModeButton.setVisible(supported);harmonyButton.setVisible(supported);
+    if(!supported)return;
+    const auto enabled=chordProcessor.isScalizerEnabled();
+    scalizerButton.setToggleState(enabled,juce::dontSendNotification);
+    lockModeButton.setButtonText(chordProcessor.scalizerLockMode()==ScalizerLockMode::chordTones?"Chord":"Scale");
+    lockModeButton.setEnabled(enabled);harmonyButton.setEnabled(enabled);
+    bool harmonyEnabled=false;
+    for(int index=0;index<3;++index)
+        harmonyEnabled|=chordProcessor.scalizerHarmonyVoice(index).degree>=2;
+    harmonyButton.setToggleState(harmonyEnabled,juce::dontSendNotification);
+}
+
+
+void ChordTrackerEditor::showHarmonyMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem(1,"All voices off");
+    menu.addItem(2,"Preset: 3rd above");
+    menu.addItem(3,"Preset: 3rds above + below");
+    menu.addSeparator();
+    for(int voiceIndex=0;voiceIndex<3;++voiceIndex)
+    {
+        juce::PopupMenu voiceMenu;
+        const auto current=chordProcessor.scalizerHarmonyVoice(voiceIndex);
+        const auto base=(voiceIndex+1)*100;
+        voiceMenu.addItem(base+1,"Off",true,current.degree<2);
+        voiceMenu.addSeparator();
+        for(int degree=2;degree<=8;++degree)
+            voiceMenu.addItem(base+10+degree,intervalName(degree)+" above",true,
+                              current.degree==degree&&current.above);
+        voiceMenu.addSeparator();
+        for(int degree=2;degree<=8;++degree)
+            voiceMenu.addItem(base+20+degree,intervalName(degree)+" below",true,
+                              current.degree==degree&&!current.above);
+        menu.addSubMenu("Voice "+juce::String(voiceIndex+1),voiceMenu);
+    }
+    juce::Component::SafePointer<ChordTrackerEditor> safe(this);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(harmonyButton),
+        [safe](int result)
+        {
+            if(safe==nullptr||result==0)return;
+            if(result==1)
+                for(int index=0;index<3;++index)safe->chordProcessor.setScalizerHarmonyVoice(index,{});
+            else if(result==2)
+            {
+                safe->chordProcessor.setScalizerHarmonyVoice(0,{3,true});
+                safe->chordProcessor.setScalizerHarmonyVoice(1,{});
+                safe->chordProcessor.setScalizerHarmonyVoice(2,{});
+            }
+            else if(result==3)
+            {
+                safe->chordProcessor.setScalizerHarmonyVoice(0,{3,true});
+                safe->chordProcessor.setScalizerHarmonyVoice(1,{3,false});
+                safe->chordProcessor.setScalizerHarmonyVoice(2,{});
+            }
+            else
+            {
+                const auto voiceIndex=result/100-1;
+                const auto code=result%100;
+                if(code==1)safe->chordProcessor.setScalizerHarmonyVoice(voiceIndex,{});
+                else if(code>=12&&code<=18)safe->chordProcessor.setScalizerHarmonyVoice(voiceIndex,{code-10,true});
+                else if(code>=22&&code<=28)safe->chordProcessor.setScalizerHarmonyVoice(voiceIndex,{code-20,false});
+            }
+            safe->updateScalizerControls();safe->repaint();
+        });
 }
 
 juce::Rectangle<int> ChordTrackerEditor::contentBounds() const
@@ -274,6 +542,7 @@ void ChordTrackerEditor::setLeadSheetSingleColumn(bool enabled)
 
 void ChordTrackerEditor::timerCallback()
 {
+    if(nativeMidiDropBridge)nativeMidiDropBridge->refresh();
     auto next = chordProcessor.sessionSnapshot();
     const auto playheadMoved=std::abs(next.playheadPpq-snapshot.playheadPpq)>0.0001;
     bool viewportChanged=false;
@@ -342,6 +611,11 @@ void ChordTrackerEditor::timerCallback()
 void ChordTrackerEditor::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(background);
+    auto headerFrame=getLocalBounds().toFloat().removeFromTop((float)headerHeight);
+    graphics.setColour(panel);
+    graphics.fillRect(headerFrame);
+    graphics.setColour(cyan.withAlpha(0.28f));
+    graphics.drawLine(headerFrame.getX(),headerFrame.getBottom()-0.5f,headerFrame.getRight(),headerFrame.getBottom()-0.5f,1.0f);
     auto statusColour=cyan;
     if(analysisStatus.containsIgnoreCase("error")||analysisStatus.containsIgnoreCase("unavailable"))statusColour=playhead;
     else if(analysisStatus.containsIgnoreCase("analyzing"))statusColour=juce::Colour(0xffffc857);
@@ -357,9 +631,16 @@ void ChordTrackerEditor::paint(juce::Graphics& graphics)
     }
     const auto content = contentBounds();
     graphics.setColour(panel);
-    graphics.fillRoundedRectangle(content.toFloat(), 4.0f);
+    graphics.fillRoundedRectangle(content.toFloat(),4.0f);
+    graphics.setColour(cyan.withAlpha(0.24f));
+    graphics.drawRoundedRectangle(content.toFloat().reduced(0.5f),4.0f,1.0f);
     if (leadSheet) drawLeadSheet(graphics, content.reduced(5), snapshot);
     else drawTimeline(graphics, content.reduced(5), snapshot);
+    if(midiFileHover)
+    {
+        graphics.setColour(cyan.withAlpha(0.86f));
+        graphics.drawRoundedRectangle(content.toFloat().reduced(1.5f),4.0f,2.0f);
+    }
 }
 
 void ChordTrackerEditor::drawTimeline(juce::Graphics& graphics, juce::Rectangle<int> area,
@@ -373,6 +654,16 @@ void ChordTrackerEditor::drawTimeline(juce::Graphics& graphics, juce::Rectangle<
     const auto span = juce::jmax(0.000001, end - start);
     const auto scale=responsiveScale(contentBounds(),false)*session.timelineTextScale;
     const auto colourIndices=regionColourIndices(session);
+    const auto showScaleLane=chordProcessor.supportsScalizer()&&chordProcessor.isScalizerEnabled();
+    const auto inferredScales=showScaleLane?inferScalizerScales(session.regions):std::vector<ScalizerScaleChoice>{};
+    auto chordArea=area;
+    juce::Rectangle<int> scaleArea;
+    if(showScaleLane&&area.getHeight()>=24)
+    {
+        scaleArea=chordArea.removeFromBottom(juce::jmax(11,(int)std::round(area.getHeight()*0.36)));
+        graphics.setColour(cyan.withAlpha(0.18f));
+        graphics.drawHorizontalLine(scaleArea.getY(),(float)area.getX(),(float)area.getRight());
+    }
 
     const std::array<double, 8> intervals { (double)beatsPerBar, 1.0, 0.25, 0.0625, 0.015625,
                                             0.00390625, 0.0009765625, 0.000244140625 };
@@ -397,8 +688,8 @@ void ChordTrackerEditor::drawTimeline(juce::Graphics& graphics, juce::Rectangle<
         }
     }
 
-    const auto regionY = (float)area.getY() + 2.0f;
-    const auto regionHeight = (float)juce::jmax(6, area.getHeight() - 4);
+    const auto regionY = (float)chordArea.getY() + 2.0f;
+    const auto regionHeight = (float)juce::jmax(6, chordArea.getHeight() - 4);
     for (size_t index = 0; index < session.regions.size(); ++index)
     {
         const auto& chord = session.regions[index];
@@ -408,7 +699,7 @@ void ChordTrackerEditor::drawTimeline(juce::Graphics& graphics, juce::Rectangle<
         const auto rawWidth = x2 - x;
         const auto gap = juce::jmin(1.5f, juce::jmax(0.0f, rawWidth * 0.18f));
         auto box = juce::Rectangle<float>(x + gap, regionY, juce::jmax(0.5f, rawWidth - gap * 2.0f), regionHeight)
-                       .getIntersection(area.toFloat());
+                       .getIntersection(chordArea.toFloat());
         if (box.isEmpty()) continue;
 
         const auto colour = chordPalette[colourIndices[index]];
@@ -436,6 +727,35 @@ void ChordTrackerEditor::drawTimeline(juce::Graphics& graphics, juce::Rectangle<
         }
     }
 
+    if(showScaleLane)
+    {
+        for(size_t index=0;index<session.regions.size()&&index<inferredScales.size();++index)
+        {
+            const auto& chord=session.regions[index];
+            const auto& inferred=inferredScales[index];
+            if(!inferred.valid||chord.endPpq<=start||chord.startPpq>=end)continue;
+            const auto x=area.getX()+(float)((chord.startPpq-start)/span)*area.getWidth();
+            const auto x2=area.getX()+(float)((chord.endPpq-start)/span)*area.getWidth();
+            const auto rawWidth=x2-x;
+            const auto gap=juce::jmin(1.5f,juce::jmax(0.0f,rawWidth*0.18f));
+            auto box=juce::Rectangle<float>(x+gap,(float)scaleArea.getY()+1.0f,
+                                            juce::jmax(0.5f,rawWidth-gap*2.0f),
+                                            (float)juce::jmax(1,scaleArea.getHeight()-2))
+                         .getIntersection(scaleArea.toFloat());
+            if(box.isEmpty())continue;
+            const auto colour=chordPalette[colourIndices[index]];
+            const auto manual=chord.scaleOverride.isNotEmpty();
+            graphics.setColour(colour.withAlpha(manual?0.46f:0.28f));graphics.fillRoundedRectangle(box,2.0f);
+            graphics.setColour(cyan.withAlpha(manual?0.76f:0.30f));graphics.drawRoundedRectangle(box,2.0f,manual?1.4f:0.8f);
+            if(box.getWidth()>=18.0f&&box.getHeight()>=8.0f)
+            {
+                graphics.setColour(juce::Colours::white.withAlpha(0.78f));
+                graphics.setFont(juce::FontOptions(juce::jlimit(7.0f,15.0f,9.0f*scale)));
+                graphics.drawFittedText(inferred.name+(manual?"  M":""),box.toNearestInt().reduced(2,0),juce::Justification::centred,1);
+            }
+        }
+    }
+
     const auto playheadX = area.getX() + (float)((session.playheadPpq - start) / span) * area.getWidth();
     if (playheadX >= area.getX() - 1 && playheadX <= area.getRight() + 1)
     {
@@ -457,6 +777,8 @@ void ChordTrackerEditor::drawLeadSheet(juce::Graphics& graphics, juce::Rectangle
     const auto firstMeasure = juce::jmax(0, (int)std::floor(timelineScrollPpq / beats));
     const auto scale=responsiveScale(contentBounds(),true)*session.leadSheetTextScale;
     const auto colourIndices=regionColourIndices(session);
+    const auto showScaleLane=chordProcessor.supportsScalizer()&&chordProcessor.isScalizerEnabled();
+    const auto inferredScales=showScaleLane?inferScalizerScales(session.regions):std::vector<ScalizerScaleChoice>{};
 
     for (int index = 0; index < measureCount; ++index)
     {
@@ -513,12 +835,23 @@ void ChordTrackerEditor::drawLeadSheet(juce::Graphics& graphics, juce::Rectangle
             }
             if (chordBox.getWidth() >= 10.0f && content.getHeight() >= 10)
             {
+                auto chordTextBox=chordBox.toNearestInt().reduced(2,0);
+                auto scaleTextBox=juce::Rectangle<int>();
+                if(showScaleLane&&regionIndex<inferredScales.size()&&inferredScales[regionIndex].valid)
+                    scaleTextBox=chordTextBox.removeFromBottom(juce::jmax(8,chordTextBox.getHeight()/3));
                 graphics.setColour(juce::Colours::white);
                 const auto maximumFont = (leadSheetSingleColumn ? 19.0f : 14.0f)*scale;
-                graphics.setFont(juce::FontOptions(juce::jlimit(8.0f, 34.0f, juce::jmin(maximumFont,content.getHeight()*0.56f)),
+                graphics.setFont(juce::FontOptions(juce::jlimit(8.0f, 34.0f, juce::jmin(maximumFont,chordTextBox.getHeight()*0.56f)),
                                                    juce::Font::bold));
-                graphics.drawFittedText(chord.name, chordBox.toNearestInt().reduced(2, 0),
-                                        juce::Justification::centred, 1);
+                graphics.drawFittedText(chord.name,chordTextBox,juce::Justification::centred,1);
+                if(!scaleTextBox.isEmpty())
+                {
+                    graphics.setColour(cyan.withAlpha(0.82f));
+                    graphics.setFont(juce::FontOptions(juce::jlimit(7.0f,13.0f,8.0f*scale)));
+                    graphics.drawFittedText(inferredScales[regionIndex].name
+                                                +(chord.scaleOverride.isNotEmpty()?"  M":""),scaleTextBox,
+                                            juce::Justification::centred,1);
+                }
             }
         }
 
@@ -567,6 +900,15 @@ std::optional<double> ChordTrackerEditor::ppqAtPoint(juce::Point<int> point) con
     }
     if(ppq<0.0)return {};
     return ppq;
+}
+
+bool ChordTrackerEditor::isScaleLanePoint(juce::Point<int> point) const
+{
+    if(leadSheet||!chordProcessor.supportsScalizer()||!chordProcessor.isScalizerEnabled())return false;
+    auto area=contentBounds().reduced(5);
+    area.removeFromTop(juce::jlimit(14,22,area.getHeight()/3));
+    if(area.getHeight()<24)return false;
+    return area.removeFromBottom(juce::jmax(11,(int)std::round(area.getHeight()*0.36))).contains(point);
 }
 
 std::optional<size_t> ChordTrackerEditor::regionAtPoint(juce::Point<int> point) const
@@ -720,6 +1062,126 @@ void ChordTrackerEditor::beginMidiDrag()
     midiDragStarted=juce::DragAndDropContainer::performExternalDragDropOfFiles(files,false,this);
 }
 
+void ChordTrackerEditor::chooseMidiImportFile()
+{
+    commitRegionEdit();
+    auto start=juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    midiImportChooser=std::make_unique<juce::FileChooser>("Import MIDI at playhead",start,"*.mid;*.midi;*.smf");
+    juce::Component::SafePointer<ChordTrackerEditor> safe(this);
+    midiImportChooser->launchAsync(juce::FileBrowserComponent::openMode
+                                   | juce::FileBrowserComponent::canSelectFiles,
+                                   [safe](const juce::FileChooser& chooser)
+    {
+        if(safe==nullptr)return;
+        const auto file=chooser.getResult();
+        if(file.existsAsFile())safe->importMidiFile(file);
+    });
+}
+
+bool ChordTrackerEditor::importMidiFile(const juce::File& file)
+{
+    commitRegionEdit();
+    clearRangeSelection();
+    const auto targetSnapshot=chordProcessor.sessionSnapshot();
+    return applyMidiImport(importChordizerMidiFile(file,targetSnapshot.playheadPpq));
+}
+
+bool ChordTrackerEditor::importMidiData(const void* data,size_t bytes,const juce::String&)
+{
+    commitRegionEdit();
+    clearRangeSelection();
+    const auto targetSnapshot=chordProcessor.sessionSnapshot();
+    return applyMidiImport(importChordizerMidiData(data,bytes,targetSnapshot.playheadPpq));
+}
+
+bool ChordTrackerEditor::applyMidiImport(ChordizerMidiImportResult&& imported)
+{
+    if(!imported.succeeded())
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                               "MIDI import failed",
+                                               imported.error.isNotEmpty()?imported.error:"No chord regions were imported.");
+        return false;
+    }
+
+    auto importedRegions=std::move(imported.regions);
+    performRegionEdit([this,importedRegions]
+    {
+        const auto current=chordProcessor.sessionSnapshot();
+        chordProcessor.replaceRegions(mergeChordizerImportedMidiRegions(current.regions,importedRegions));
+    });
+    snapshot=chordProcessor.sessionSnapshot();
+    repaint();
+    return true;
+}
+
+bool ChordTrackerEditor::handleNativeMidiDrop(const MacMidiDropBridge::DropData& data)
+{
+    setMidiDropHover(false);
+    if(data.midiData.getSize()>0)
+        return importMidiData(data.midiData.getData(),data.midiData.getSize(),data.sourceName);
+
+    for(const auto& path:data.files)
+    {
+        const auto file=juce::File(path);
+        if(chordizerIsMidiImportFile(file))
+            return importMidiFile(file);
+    }
+
+    auto message=juce::String("Logic did not expose readable MIDI data for this drag.");
+    if(data.diagnostic.isNotEmpty())
+        message+="\n\n"+data.diagnostic;
+    if(data.files.isEmpty())
+        message+="\n\nPasteboard types seen:\n"+data.pasteboardTypes;
+    else
+        message+="\n\nPromised/dropped files were not MIDI files:\n"+data.files.joinIntoString("\n");
+    message+="\n\nA debug log was written to ~/Library/Application Support/Santismo/Chordizer/drop-debug.log.";
+    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                           "Logic did not provide MIDI",
+                                           message);
+    return true;
+}
+
+void ChordTrackerEditor::setMidiDropHover(bool hovering)
+{
+    if(midiFileHover==hovering)return;
+    midiFileHover=hovering;
+    repaint();
+}
+
+bool ChordTrackerEditor::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    for(const auto& path:files)
+        if(chordizerIsMidiImportFile(juce::File(path)))return true;
+    return false;
+}
+
+void ChordTrackerEditor::fileDragEnter(const juce::StringArray& files,int,int)
+{
+    setMidiDropHover(isInterestedInFileDrag(files));
+}
+
+void ChordTrackerEditor::fileDragExit(const juce::StringArray&)
+{
+    setMidiDropHover(false);
+}
+
+void ChordTrackerEditor::filesDropped(const juce::StringArray& files,int,int)
+{
+    setMidiDropHover(false);
+    for(const auto& path:files)
+    {
+        const auto file=juce::File(path);
+        if(chordizerIsMidiImportFile(file))
+        {
+            importMidiFile(file);
+            repaint();
+            return;
+        }
+    }
+    repaint();
+}
+
 void ChordTrackerEditor::performRegionEdit(const std::function<void()>& action)
 {
     auto before=chordProcessor.sessionSnapshot().regions;
@@ -784,6 +1246,30 @@ void ChordTrackerEditor::showRegionMenu(size_t index,const juce::MouseEvent& eve
         for(int i=0;i<region.alternatives.size();++i) menu.addItem(100+i,region.alternatives[i]);
     }
     menu.addSeparator();
+    if(chordProcessor.supportsScalizer())
+    {
+        const auto inferred=inferScalizerScale(snapshot.regions,index);
+        const auto preferSharps=region.name.containsChar('#')||region.scaleOverride.containsChar('#');
+        const auto types=scalizerScaleTypeNames();
+        juce::PopupMenu scaleMenu;
+        scaleMenu.addItem(900,"Auto (from chord)",true,region.scaleOverride.isEmpty());
+        scaleMenu.addSeparator();
+        for(int root=0;root<12;++root)
+        {
+            juce::PopupMenu rootMenu;
+            for(int type=0;type<types.size();++type)
+            {
+                const auto name=makeScalizerScaleName(root,type,preferSharps);
+                rootMenu.addItem(1000+root*100+type,types[type],true,
+                                 region.scaleOverride.equalsIgnoreCase(name));
+            }
+            const auto rootName=makeScalizerScaleName(root,0,preferSharps).upToFirstOccurrenceOf(" ",false,false);
+            scaleMenu.addSubMenu(rootName,rootMenu);
+        }
+        const auto scaleLabel=inferred.valid?inferred.name:"Unavailable";
+        menu.addSubMenu("Scale  "+scaleLabel+(region.scaleOverride.isNotEmpty()?"  (Manual)":"  (Auto)"),scaleMenu);
+        menu.addSeparator();
+    }
     menu.addItem(2,"Edit name");
     menu.addItem(3,"Delete region");
     menu.addItem(4,"Quantize start/end 1/16");
@@ -795,7 +1281,8 @@ void ChordTrackerEditor::showRegionMenu(size_t index,const juce::MouseEvent& eve
     auto options=juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea(localAreaToGlobal(anchor))
                      .withPreferredPopupDirection(juce::PopupMenu::Options::PopupDirection::downwards);
     if(quickEdit)quickEditMenuOpen=true;
-    menu.showMenuAsync(options,[safe,index,region,position,quickEdit](int result)
+    const auto preferSharps=region.name.containsChar('#')||region.scaleOverride.containsChar('#');
+    menu.showMenuAsync(options,[safe,index,region,position,quickEdit,preferSharps](int result)
     {
         if(safe==nullptr)return;
         safe->quickEditMenuOpen=false;
@@ -805,7 +1292,21 @@ void ChordTrackerEditor::showRegionMenu(size_t index,const juce::MouseEvent& eve
             if(quickEdit&&safe->editingRegion.has_value())safe->chordNameEditor.grabKeyboardFocus();
             return;
         }
-        if(result==2)
+        if(result==900)
+        {
+            safe->performRegionEdit([safe,index]{if(safe!=nullptr)safe->chordProcessor.setRegionScaleOverride(index,{});});
+        }
+        else if(result>=1000&&result<2200)
+        {
+            const auto encoded=result-1000;
+            const auto root=encoded/100,type=encoded%100;
+            const auto name=makeScalizerScaleName(root,type,preferSharps);
+            if(name.isNotEmpty())safe->performRegionEdit([safe,index,name]
+            {
+                if(safe!=nullptr)safe->chordProcessor.setRegionScaleOverride(index,name);
+            });
+        }
+        else if(result==2)
         {
             if(!quickEdit)safe->beginRegionEdit(index,position);
             else{safe->chordNameEditor.grabKeyboardFocus();safe->chordNameEditor.selectAll();}
@@ -845,6 +1346,10 @@ void ChordTrackerEditor::mouseDown(const juce::MouseEvent& event)
     if(!editMode)
     {
         if(editingRegion.has_value())commitRegionEdit();
+        if(index.has_value()&&isScaleLanePoint(event.getPosition()))
+        {
+            clearRangeSelection();selectedRegion=*index;showRegionMenu(*index,event);return;
+        }
         if(index.has_value())
         {
             if(!isRegionSelected(*index))selectRegion(*index);else grabKeyboardFocus();
@@ -985,10 +1490,11 @@ void ChordTrackerEditor::mouseWheelMove(const juce::MouseEvent& event, const juc
 
 void ChordTrackerEditor::resized()
 {
+    if(nativeMidiDropBridge)nativeMidiDropBridge->refresh();
     auto controls = getLocalBounds().removeFromTop(headerHeight).reduced(6, 5);
     constexpr int buttonWidth = 24;
     for (auto* button : { &viewButton, &editButton, &smallerTextButton, &largerTextButton,
-                          &listenButton, &clearButton, &copyButton, &quantizeButton, &undoButton, &redoButton })
+                          &listenButton, &importButton, &clearButton, &copyButton, &quantizeButton, &undoButton, &redoButton })
     {
         button->setBounds(controls.removeFromLeft(buttonWidth));
         controls.removeFromLeft(4);
@@ -999,5 +1505,12 @@ void ChordTrackerEditor::resized()
         controls.removeFromLeft(4);
     }
     else leadZoomButton.setBounds({});
+    if(chordProcessor.supportsScalizer())
+    {
+        controls.removeFromLeft(4);
+        scalizerButton.setBounds(controls.removeFromLeft(buttonWidth));controls.removeFromLeft(4);
+        lockModeButton.setBounds(controls.removeFromLeft(50));controls.removeFromLeft(4);
+        harmonyButton.setBounds(controls.removeFromLeft(buttonWidth));controls.removeFromLeft(6);
+    }
     persistEditorState();
 }

@@ -6,11 +6,19 @@
 
 struct ChordRegionData
 {
+    ChordRegionData() = default;
+    ChordRegionData(double start,double end,juce::String chordName,juce::String chordSource,
+                    float chordConfidence=1.0f,juce::StringArray chordAlternatives={},
+                    bool isLocked=false,juce::String manualScale={})
+        : startPpq(start),endPpq(end),name(std::move(chordName)),source(std::move(chordSource)),
+          confidence(chordConfidence),alternatives(std::move(chordAlternatives)),locked(isLocked),
+          scaleOverride(std::move(manualScale)) {}
     double startPpq = 0.0, endPpq = 0.0;
     juce::String name, source;
     float confidence = 1.0f;
     juce::StringArray alternatives;
     bool locked = false;
+    juce::String scaleOverride;
 };
 
 struct PitchedNoteRegion
@@ -27,6 +35,16 @@ struct HarmonicFrameEvidence
     int bassPitchClass = -1;
     float confidence = 1.0f;
     float changeConfidence = 0.0f;
+};
+
+struct ChordinoChromaFrame
+{
+    std::array<float, 12> chroma {};
+    std::array<float, 12> bassChroma {};
+    int bassPitchClass = -1;
+    float confidence = 0.0f;
+    float changeConfidence = 0.0f;
+    float tuningOffsetSemitones = 0.0f;
 };
 
 struct PhaseSafeDownmixPlan
@@ -68,6 +86,7 @@ public:
     void publishChord(double ppq, const juce::String& chord, const juce::String& source,
                       float confidence, ChordUpdateKind kind, const juce::StringArray& alternatives = {});
     void renameRegion(size_t index, const juce::String& name);
+    void setRegionScaleOverride(size_t index, const juce::String& scaleName);
     void deleteRegion(size_t index);
     bool resizeRegion(size_t index, double startPpq, double endPpq);
     bool quantizeRegion(size_t index, double gridPpq);
@@ -129,6 +148,9 @@ juce::String identifyChord(const std::array<float, 12>& pitchWeights, float& con
                            float additionalComplexityPenalty = 0.0f);
 std::array<float,12> calculateConstantQHpcp(const float* samples,const float* window,int frameSize,double sampleRate,
                                             int* bassPitchClass = nullptr);
+ChordinoChromaFrame calculateChordinoChromaFrame(const float* samples,const float* window,int frameSize,
+                                                double sampleRate,
+                                                const std::array<float,12>* previousChroma = nullptr);
 void stabilizeHarmonicFrames(std::vector<HarmonicFrameEvidence>& frames);
 PhaseSafeDownmixPlan createPhaseSafeDownmixPlan(const juce::AudioBuffer<float>& buffer) noexcept;
 float phaseSafeDownmixSample(const juce::AudioBuffer<float>& buffer,int sample,

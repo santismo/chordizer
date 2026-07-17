@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "ChordEngine.h"
+#include "ScalizerMidiRecorder.h"
 
 constexpr int chordizerMidiTicksPerQuarterNote=960;
 
@@ -10,3 +11,6 @@ juce::MidiFile createChordizerMidiFile(const std::vector<ChordRegionData>& regio
                                        int numerator,int denominator);
 bool writeChordizerMidiFile(const std::vector<ChordRegionData>& regions,double bpm,
                             int numerator,int denominator,const juce::File& destination);
+double scalizerRecordingBarOrigin(const ScalizerRecordingTake& take) noexcept;
+juce::MidiFile createScalizerRecordingMidiFile(const ScalizerRecordingTake& take);
+bool writeScalizerRecordingMidiFile(const ScalizerRecordingTake& take,const juce::File& destination);

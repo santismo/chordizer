@@ -13,7 +13,7 @@
 
 namespace
 {
-constexpr uint32_t sharedMagic=0x43545348, sharedVersion=4;
+constexpr uint32_t sharedMagic=0x43545348, sharedVersion=5;
 constexpr size_t maximumSharedRegions=2048, wireNameLength=48, maximumAlternatives=4;
 
 struct SharedRegionWire
@@ -22,6 +22,7 @@ struct SharedRegionWire
     float confidence=1.0f;
     uint8_t source=0,locked=0;
     char name[wireNameLength]{};
+    char scaleOverride[wireNameLength]{};
     char alternatives[maximumAlternatives][wireNameLength]{};
 };
 
@@ -63,6 +64,7 @@ ChordRegionData fromWire(const SharedRegionWire& wire)
     ChordRegionData result;
     result.startPpq=wire.startPpq; result.endPpq=wire.endPpq; result.confidence=wire.confidence;
     result.name=juce::String::fromUTF8(wire.name); result.source=wire.source==1?"Audio":"MIDI"; result.locked=wire.locked!=0;
+    result.scaleOverride=juce::String::fromUTF8(wire.scaleOverride);
     for(size_t i=0;i<maximumAlternatives;++i) if(wire.alternatives[i][0]!=0) result.alternatives.add(juce::String::fromUTF8(wire.alternatives[i]));
     return result;
 }
@@ -244,12 +246,29 @@ void SharedChordSession::renameRegion(size_t index, const juce::String& name)
 {
     const auto trimmed = name.trim();
     if (trimmed.isEmpty()) return;
-    if(auto* wire=(SharedSessionWire*)sharedMemory){WireLock lock(wire);if(!lock.locked||index>=wire->regionCount)return;copyWireString(wire->regions[index].name,trimmed);wire->regions[index].confidence=1.0f;wire->regions[index].locked=1;++wire->revision;return;}
+    if(auto* wire=(SharedSessionWire*)sharedMemory){WireLock lock(wire);if(!lock.locked||index>=wire->regionCount)return;copyWireString(wire->regions[index].name,trimmed);copyWireString(wire->regions[index].scaleOverride,{});wire->regions[index].confidence=1.0f;wire->regions[index].locked=1;++wire->revision;return;}
     std::lock_guard lock(mutex);
     if (index >= regions.size()) return;
     regions[index].name = trimmed;
+    regions[index].scaleOverride.clear();
     regions[index].confidence = 1.0f;
     regions[index].locked = true;
+    ++revision;
+}
+
+void SharedChordSession::setRegionScaleOverride(size_t index,const juce::String& scaleName)
+{
+    const auto trimmed=scaleName.trim();
+    if(auto* wire=(SharedSessionWire*)sharedMemory)
+    {
+        WireLock lock(wire);if(!lock.locked||index>=wire->regionCount)return;
+        copyWireString(wire->regions[index].scaleOverride,trimmed);
+        if(trimmed.isNotEmpty())wire->regions[index].locked=1;
+        ++wire->revision;return;
+    }
+    std::lock_guard lock(mutex);if(index>=regions.size())return;
+    regions[index].scaleOverride=trimmed;
+    if(trimmed.isNotEmpty())regions[index].locked=true;
     ++revision;
 }
 
@@ -352,6 +371,7 @@ void SharedChordSession::replaceRegions(const std::vector<ChordRegionData>& repl
             destination.startPpq=source.startPpq;destination.endPpq=source.endPpq;
             destination.confidence=source.confidence;destination.source=source.source=="Audio"?1:0;
             destination.locked=source.locked?1:0;copyWireString(destination.name,source.name);
+            copyWireString(destination.scaleOverride,source.scaleOverride);
             setWireAlternatives(destination,source.alternatives);
         }
         ++wire->revision;return;
@@ -448,6 +468,19 @@ void SharedChordSession::replaceAudioRegions(double startPpq,double endPpq,
                     merged.back().endPpq=juce::jmax(merged.back().endPpq,region.endPpq);
                     continue;
                 }
+                if(rootName(previousBase)==rootName(regionBase)
+                   &&region.endPpq-region.startPpq<=0.70
+                   &&region.startPpq<=merged.back().endPpq+0.55)
+                {
+                    merged.back().endPpq=juce::jmax(merged.back().endPpq,region.endPpq);
+                    if(region.confidence>merged.back().confidence&&merged.back().endPpq-merged.back().startPpq<=0.75)
+                    {
+                        merged.back().name=region.name;
+                        merged.back().confidence=region.confidence;
+                        merged.back().alternatives=region.alternatives;
+                    }
+                    continue;
+                }
                 const auto seamDistance=region.startPpq-merged.back().endPpq;
                 if(std::abs(seamDistance)<=neuralSeamTolerance)
                 {
@@ -493,6 +526,60 @@ void SharedChordSession::replaceAudioRegions(double startPpq,double endPpq,
             }
             ++index;
         }
+        for(size_t index=1;index+1<merged.size();)
+        {
+            auto& previous=merged[index-1];
+            const auto& middle=merged[index];
+            const auto& next=merged[index+1];
+            const auto audioTriplet=previous.source=="Audio"&&middle.source=="Audio"&&next.source=="Audio"
+                &&!previous.locked&&!middle.locked&&!next.locked;
+            const auto middleDuration=middle.endPpq-middle.startPpq;
+            if(audioTriplet&&middleDuration<=0.85&&rootName(previous.name)==rootName(next.name))
+            {
+                previous.endPpq=juce::jmax(previous.endPpq,next.endPpq);
+                if(next.confidence>previous.confidence)
+                {
+                    previous.name=next.name;
+                    previous.confidence=next.confidence;
+                    previous.alternatives=next.alternatives;
+                }
+                merged.erase(merged.begin()+(std::ptrdiff_t)index,
+                             merged.begin()+(std::ptrdiff_t)index+2);
+                continue;
+            }
+            ++index;
+        }
+        for(size_t index=0;index<merged.size();)
+        {
+            const auto& fragment=merged[index];
+            if(fragment.source!="Audio"||fragment.locked||fragment.endPpq-fragment.startPpq>0.50
+               ||merged.size()<2)
+            {
+                ++index;
+                continue;
+            }
+            const auto canUsePrevious=index>0&&merged[index-1].source=="Audio"&&!merged[index-1].locked;
+            const auto canUseNext=index+1<merged.size()&&merged[index+1].source=="Audio"&&!merged[index+1].locked;
+            const auto previousScore=canUsePrevious?merged[index-1].confidence:-1.0f;
+            const auto nextScore=canUseNext?merged[index+1].confidence:-1.0f;
+            const auto neighbourScore=juce::jmax(previousScore,nextScore);
+            if(neighbourScore<0.0f||fragment.confidence>neighbourScore*0.92f)
+            {
+                ++index;
+                continue;
+            }
+            if(nextScore>previousScore)
+            {
+                merged[index+1].startPpq=fragment.startPpq;
+                merged.erase(merged.begin()+(std::ptrdiff_t)index);
+            }
+            else
+            {
+                merged[index-1].endPpq=fragment.endPpq;
+                merged.erase(merged.begin()+(std::ptrdiff_t)index);
+                if(index>0)--index;
+            }
+        }
         return merged;
     };
 
@@ -509,6 +596,7 @@ void SharedChordSession::replaceAudioRegions(double startPpq,double endPpq,
             destination.startPpq=source.startPpq;destination.endPpq=source.endPpq;
             destination.confidence=source.confidence;destination.source=source.source=="Audio"?1:0;
             destination.locked=source.locked?1:0;copyWireString(destination.name,source.name);
+            copyWireString(destination.scaleOverride,source.scaleOverride);
             setWireAlternatives(destination,source.alternatives);
         }
         ++wire->revision;return;
@@ -1538,6 +1626,8 @@ std::vector<ChordRegionData> createChordRegionsFromNotes(const std::vector<Pitch
             regionWeights[pitchClass]=strongestWeights[pitchClass]
                                       +(summedWeights[pitchClass]-strongestWeights[pitchClass])*0.18f;
         const auto noteOnlyWeights=regionWeights;
+        std::array<float,12> acousticOnlyWeights{};
+        auto hasAcousticWeights=false;
         if(harmonicFrames!=nullptr)
         {
             std::array<float,12> acousticWeights{};auto acousticFrameWeight=0.0f;
@@ -1558,13 +1648,18 @@ std::vector<ChordRegionData> createChordRegionsFromNotes(const std::vector<Pitch
                 const auto acousticPeak=*std::max_element(acousticWeights.begin(),acousticWeights.end());
                 const auto neuralPeak=*std::max_element(regionWeights.begin(),regionWeights.end());
                 if(acousticPeak>0.0f)
+                {
+                    hasAcousticWeights=true;
+                    for(size_t pitchClass=0;pitchClass<acousticWeights.size();++pitchClass)
+                        acousticOnlyWeights[pitchClass]=acousticWeights[pitchClass]/acousticPeak;
                     for(size_t pitchClass=0;pitchClass<regionWeights.size();++pitchClass)
                     {
-                        const auto acoustic=acousticWeights[pitchClass]/acousticPeak;
+                        const auto acoustic=acousticOnlyWeights[pitchClass];
                         const auto neural=neuralPeak>0.0f?regionWeights[pitchClass]/neuralPeak:0.0f;
                         regionWeights[pitchClass]=neural*0.60f+acoustic*0.27f
                                                  +juce::jmin(neural,acoustic)*0.16f;
                     }
+                }
             }
         }
         const auto strongestMidi=*std::max_element(midiEvidence.begin(),midiEvidence.end());
@@ -1589,16 +1684,29 @@ std::vector<ChordRegionData> createChordRegionsFromNotes(const std::vector<Pitch
         const auto noteOnlyBase=chordWithoutBass(noteOnlyCanonical);
         const auto currentIsMajorSixth=currentBase.endsWithChar('6')&&!currentBase.endsWith("m6");
         const auto sameRoot=chordRoot(currentBase)==chordRoot(canonicalBase);
+        const auto noteOnlySameRoot=chordRoot(currentBase)==chordRoot(noteOnlyBase);
+        const auto currentIsPowerChord=currentBase==chordRoot(currentBase)+"5";
         const auto simplerSameRoot=harmonicFrames!=nullptr&&sameRoot&&canonicalBase!=currentBase
                                    &&canonicalBase.length()<currentBase.length();
         const auto regionPeak=*std::max_element(regionWeights.begin(),regionWeights.end());
         const auto currentRootPitchClass=namedPitchClass(chordRoot(currentBase));
+        const auto majorSeventhPitchClass=currentRootPitchClass>=0?(currentRootPitchClass+11)%12:-1;
         const auto weakMajorSeventh=(currentBase.contains("maj7")||currentBase.contains("maj9"))
                                      &&currentRootPitchClass>=0&&regionPeak>0.0f
-                                     &&regionWeights[(size_t)((currentRootPitchClass+11)%12)]<regionPeak*0.20f;
+                                     &&regionWeights[(size_t)majorSeventhPitchClass]<regionPeak*0.36f;
+        const auto strongAcousticMajorSeventh=majorSeventhPitchClass>=0&&hasAcousticWeights
+            &&acousticOnlyWeights[(size_t)majorSeventhPitchClass]>=0.80f;
         const auto currentHasFragileColour=currentBase.contains("b9")||currentBase.contains("#9")
                                            ||currentBase.contains("#11")||currentBase.contains("b13")
-                                           ||currentBase.contains("mMaj")||weakMajorSeventh;
+                                           ||currentBase.contains("mMaj")
+                                           ||(weakMajorSeventh&&!strongAcousticMajorSeventh);
+        const auto unsupportedMajorSeventh=harmonicFrames!=nullptr
+            &&(currentBase.contains("maj7")||currentBase.contains("maj9"))
+            &&weakMajorSeventh
+            &&!strongAcousticMajorSeventh
+            &&noteOnlySameRoot&&noteOnlyBase.length()<currentBase.length()
+            &&!noteOnlyBase.contains("maj7")&&!noteOnlyBase.contains("maj9")
+            &&noteOnlyConfidence>=0.55f;
         const auto simplerNoteOnly=harmonicFrames!=nullptr&&currentHasFragileColour
                                    &&chordRoot(currentBase)==chordRoot(noteOnlyBase)
                                    &&noteOnlyBase!=currentBase&&noteOnlyBase.length()<currentBase.length()
@@ -1606,7 +1714,19 @@ std::vector<ChordRegionData> createChordRegionsFromNotes(const std::vector<Pitch
         const auto currentBass=region.name.fromFirstOccurrenceOf("/",false,false);
         const auto canonicalUsesCurrentBass=harmonicFrames!=nullptr&&!currentBass.isEmpty()
                                             &&chordRoot(canonicalBase)==currentBass;
-        if(simplerNoteOnly)
+        if(currentIsPowerChord&&noteOnlySameRoot&&noteOnlyBase!=currentBase&&noteOnlyConfidence>=0.40f)
+        {
+            region.name=noteOnlyCanonical;
+            region.confidence=juce::jmax(region.confidence,noteOnlyConfidence);
+            region.alternatives=noteOnlyAlternatives;
+        }
+        else if(unsupportedMajorSeventh)
+        {
+            region.name=noteOnlyCanonical;
+            region.confidence=juce::jmax(region.confidence,noteOnlyConfidence);
+            region.alternatives=noteOnlyAlternatives;
+        }
+        else if(simplerNoteOnly)
         {
             region.name=noteOnlyCanonical;
             region.confidence=juce::jmax(region.confidence,noteOnlyConfidence);
@@ -1666,6 +1786,36 @@ std::vector<ChordRegionData> createChordRegionsFromNotes(const std::vector<Pitch
             if(!region.alternatives.isEmpty())canonicalMerged.back().alternatives=region.alternatives;
         }
         else canonicalMerged.push_back(std::move(region));
+    }
+    const auto alternativesRelate=[&](const ChordRegionData& anchor,const ChordRegionData& fragment)
+    {
+        const auto fragmentBase=chordWithoutBass(fragment.name);
+        const auto fragmentRoot=chordRoot(fragmentBase);
+        for(const auto& alternative:anchor.alternatives)
+        {
+            const auto alternativeBase=chordWithoutBass(alternative);
+            if(alternativeBase==fragmentBase||chordRoot(alternativeBase)==fragmentRoot)
+                return true;
+        }
+        return false;
+    };
+    for(size_t index=1;index<canonicalMerged.size();)
+    {
+        const auto duration=canonicalMerged[index].endPpq-canonicalMerged[index].startPpq;
+        const auto previousBase=chordWithoutBass(canonicalMerged[index-1].name);
+        const auto currentBase=chordWithoutBass(canonicalMerged[index].name);
+        const auto sameRoot=chordRoot(previousBase)==chordRoot(currentBase);
+        const auto relatedAlternative=alternativesRelate(canonicalMerged[index-1],canonicalMerged[index]);
+        const auto shortSameRoot=duration<=0.70&&sameRoot;
+        const auto shortUnattackedAlternative=duration<=0.85&&relatedAlternative
+            &&!hasConfirmedAttackBurst(canonicalMerged[index]);
+        if(shortSameRoot||shortUnattackedAlternative)
+        {
+            canonicalMerged[index-1].endPpq=canonicalMerged[index].endPpq;
+            canonicalMerged.erase(canonicalMerged.begin()+(std::ptrdiff_t)index);
+            continue;
+        }
+        ++index;
     }
     return canonicalMerged;
 }
@@ -1755,74 +1905,215 @@ void stabilizeHarmonicFrames(std::vector<HarmonicFrameEvidence>& frames)
     }
 }
 
-std::array<float,12> calculateConstantQHpcp(const float* samples,const float* window,int frameSize,double sampleRate,
-                                            int* bassPitchClass)
+namespace
 {
-    std::array<float,12> hpcp{};
-    if(bassPitchClass!=nullptr)*bassPitchClass=-1;
-    double energy=0.0;for(int i=0;i<frameSize;++i)energy+=samples[i]*samples[i];
-    if(frameSize<=0||energy/frameSize<1.0e-8)return hpcp;
-    constexpr int lowestMidi=33,highestMidi=96,pitchCount=highestMidi-lowestMidi+1;
-    std::array<float,pitchCount> pitchEnergy{};
-    for(int midi=33;midi<=96;++midi)
+constexpr int chordinoLowestMidi=28;
+constexpr int chordinoHighestMidi=100;
+constexpr int chordinoPitchCount=chordinoHighestMidi-chordinoLowestMidi+1;
+
+double goertzelMagnitude(const float* samples,const float* window,int frameSize,double sampleRate,double frequency)
+{
+    if(samples==nullptr||window==nullptr||frameSize<=0||sampleRate<=0.0
+       ||frequency<=20.0||frequency>=sampleRate*0.48)return 0.0;
+    const auto coefficient=2.0*std::cos(2.0*juce::MathConstants<double>::pi*frequency/sampleRate);
+    double previous=0.0,previous2=0.0;
+    for(int i=0;i<frameSize;++i)
+    {
+        const auto value=(double)samples[i]*(double)window[i]+coefficient*previous-previous2;
+        previous2=previous;previous=value;
+    }
+    return std::sqrt(juce::jmax(0.0,previous2*previous2+previous*previous
+                                     -coefficient*previous*previous2));
+}
+
+float normalisePeak(std::array<float,12>& values,float floor)
+{
+    const auto peak=*std::max_element(values.begin(),values.end());
+    if(peak<=0.0f)return 0.0f;
+    for(auto& value:values)
+    {
+        value/=peak;
+        if(value<floor)value=0.0f;
+    }
+    return peak;
+}
+
+float normalisedChromaDistance(const std::array<float,12>& left,const std::array<float,12>& right)
+{
+    const auto leftTotal=std::accumulate(left.begin(),left.end(),0.0f);
+    const auto rightTotal=std::accumulate(right.begin(),right.end(),0.0f);
+    if(leftTotal<=0.001f||rightTotal<=0.001f)return 0.0f;
+    auto distance=0.0f;
+    for(size_t pitchClass=0;pitchClass<left.size();++pitchClass)
+        distance+=std::abs(left[pitchClass]/leftTotal-right[pitchClass]/rightTotal);
+    return juce::jlimit(0.0f,1.0f,(distance*0.5f-0.16f)/0.40f);
+}
+
+float estimateTransientPenalty(const float* samples,int frameSize) noexcept
+{
+    if(samples==nullptr||frameSize<2)return 1.0f;
+    double absolute=0.0,difference=0.0;
+    for(int i=1;i<frameSize;++i)
+    {
+        absolute+=std::abs((double)samples[i]);
+        difference+=std::abs((double)samples[i]-(double)samples[i-1]);
+    }
+    const auto roughness=difference/(absolute+1.0e-9);
+    return juce::jlimit(0.25f,1.0f,(float)(1.0-(roughness-0.48)*0.62));
+}
+
+int countActivePitchClasses(const std::array<float,12>& chroma)
+{
+    const auto peak=*std::max_element(chroma.begin(),chroma.end());
+    auto active=0;
+    for(const auto value:chroma)
+        if(value>=peak*0.10f&&value>0.06f)++active;
+    return active;
+}
+}
+
+ChordinoChromaFrame calculateChordinoChromaFrame(const float* samples,const float* window,int frameSize,
+                                                double sampleRate,
+                                                const std::array<float,12>* previousChroma)
+{
+    ChordinoChromaFrame result;
+    if(samples==nullptr||window==nullptr||frameSize<=0||sampleRate<=0.0)return result;
+
+    double energy=0.0;
+    for(int i=0;i<frameSize;++i)energy+=(double)samples[i]*(double)samples[i];
+    if(energy/(double)frameSize<1.0e-8)return result;
+
+    std::array<float,chordinoPitchCount> pitchEnergy{};
+    std::array<float,chordinoPitchCount> pitchDetune{};
+    for(int midi=chordinoLowestMidi;midi<=chordinoHighestMidi;++midi)
     {
         double strongest=0.0;
+        auto bestDetune=0.0;
         for(const auto detune:{-0.25,0.0,0.25})
         {
             const auto frequency=440.0*std::pow(2.0,(midi+detune-69.0)/12.0);
-            const auto coefficient=2.0*std::cos(2.0*juce::MathConstants<double>::pi*frequency/sampleRate);
-            double previous=0.0,previous2=0.0;
-            for(int i=0;i<frameSize;++i)
+            const auto magnitude=goertzelMagnitude(samples,window,frameSize,sampleRate,frequency);
+            if(magnitude>strongest)
             {
-                const auto value=samples[i]*window[i]+coefficient*previous-previous2;
-                previous2=previous;previous=value;
+                strongest=magnitude;
+                bestDetune=detune;
             }
-            strongest=juce::jmax(strongest,std::sqrt(juce::jmax(0.0,previous2*previous2+previous*previous-coefficient*previous*previous2)));
         }
         const auto frequency=440.0*std::pow(2.0,(midi-69.0)/12.0);
-        pitchEnergy[(size_t)(midi-lowestMidi)]=(float)(strongest/std::sqrt(frequency));
+        pitchEnergy[(size_t)(midi-chordinoLowestMidi)]=(float)(strongest/std::sqrt(frequency));
+        pitchDetune[(size_t)(midi-chordinoLowestMidi)]=(float)bestDetune;
     }
 
     const auto rawPeak=*std::max_element(pitchEnergy.begin(),pitchEnergy.end());
-    if(rawPeak<=0.0f)return hpcp;
+    if(rawPeak<=0.0f)return result;
 
-    // Remove energy that is explained by lower fundamentals before folding the
-    // spectrum into pitch classes. This keeps an instrument's partials from
-    // being interpreted as independent chord extensions.
-    constexpr int harmonicOffsets[]{12,19,24,28,31,34,36};
-    constexpr float harmonicWeights[]{0.62f,0.34f,0.24f,0.16f,0.12f,0.09f,0.07f};
-    auto residual=pitchEnergy;
-    std::array<std::array<float,6>,12> pitchClassSalience{};
-    std::array<int,12> salienceCounts{};
-    for(int midi=lowestMidi;midi<=highestMidi;++midi)
+    auto tuningNumerator=0.0f,tuningDenominator=0.0f;
+    for(size_t index=0;index<pitchEnergy.size();++index)
+        if(pitchEnergy[index]>=rawPeak*0.08f)
+        {
+            tuningNumerator+=pitchDetune[index]*pitchEnergy[index];
+            tuningDenominator+=pitchEnergy[index];
+        }
+    if(tuningDenominator>0.0f)
+        result.tuningOffsetSemitones=juce::jlimit(-0.30f,0.30f,tuningNumerator/tuningDenominator);
+
+    std::array<float,chordinoPitchCount> whitened{};
+    for(size_t index=0;index<pitchEnergy.size();++index)
     {
-        const auto direct=residual[(size_t)(midi-lowestMidi)];
-        if(direct<rawPeak*0.035f)continue;
-        auto& count=salienceCounts[(size_t)(midi%12)];
-        if(count<(int)pitchClassSalience[(size_t)(midi%12)].size())
-            pitchClassSalience[(size_t)(midi%12)][(size_t)count++]=direct;
+        const auto first=index>7?index-7:0;
+        const auto last=juce::jmin(pitchEnergy.size()-1,index+7);
+        auto localMean=0.0f;
+        for(auto neighbour=first;neighbour<=last;++neighbour)
+            localMean+=pitchEnergy[neighbour];
+        localMean/=(float)(last-first+1);
+        const auto lifted=juce::jmax(0.0f,pitchEnergy[index]-localMean*0.12f);
+        whitened[index]=lifted/std::sqrt(localMean+rawPeak*0.015f);
+    }
+
+    const auto whitenedPeak=*std::max_element(whitened.begin(),whitened.end());
+    if(whitenedPeak<=0.0f)return result;
+
+    std::array<float,chordinoPitchCount> residual{},activation{};
+    for(size_t index=0;index<whitened.size();++index)
+        residual[index]=std::pow(juce::jmax(0.0f,whitened[index]/whitenedPeak),0.90f);
+
+    constexpr int harmonicOffsets[]{12,19,24,28,31,34,36};
+    constexpr float harmonicWeights[]{0.46f,0.30f,0.20f,0.14f,0.10f,0.075f,0.055f};
+    for(int midi=chordinoLowestMidi;midi<=chordinoHighestMidi;++midi)
+    {
+        const auto index=(size_t)(midi-chordinoLowestMidi);
+        const auto direct=residual[index];
+        if(direct<0.025f)continue;
+        activation[index]=direct;
         for(size_t harmonic=0;harmonic<std::size(harmonicOffsets);++harmonic)
         {
             const auto partialMidi=midi+harmonicOffsets[harmonic];
-            if(partialMidi<=highestMidi)
+            if(partialMidi<=chordinoHighestMidi)
             {
-                auto& partial=residual[(size_t)(partialMidi-lowestMidi)];
+                auto& partial=residual[(size_t)(partialMidi-chordinoLowestMidi)];
                 partial=juce::jmax(0.0f,partial-direct*harmonicWeights[harmonic]);
             }
         }
     }
-    if(bassPitchClass!=nullptr)
-        for(int midi=lowestMidi;midi<=highestMidi;++midi)
-            if(residual[(size_t)(midi-lowestMidi)]>=rawPeak*0.15f){*bassPitchClass=midi%12;break;}
-    for(size_t pc=0;pc<12;++pc)
+
+    auto activationSum=0.0f;
+    for(int midi=chordinoLowestMidi;midi<=chordinoHighestMidi;++midi)
     {
-        auto& values=pitchClassSalience[pc];
-        std::sort(values.begin(),values.end(),std::greater<float>());
-        hpcp[pc]=values[0]+values[1]*0.22f+values[2]*0.07f;
+        const auto value=activation[(size_t)(midi-chordinoLowestMidi)];
+        if(value<=0.025f)continue;
+        activationSum+=value;
+        const auto pitchClass=(size_t)(midi%12);
+        const auto midDistance=((double)midi-61.0)/18.0;
+        auto midProfile=(float)(0.16+std::exp(-0.5*midDistance*midDistance));
+        if(midi<38)midProfile*=0.58f;
+        if(midi>74)midProfile*=juce::jlimit(0.42f,1.0f,1.0f-(float)(midi-74)*0.017f);
+        result.chroma[pitchClass]+=std::pow(value,0.72f)*midProfile;
+
+        if(midi<=64)
+        {
+            const auto bassDistance=((double)midi-42.0)/10.5;
+            const auto bassProfile=(float)std::exp(-0.5*bassDistance*bassDistance);
+            result.bassChroma[pitchClass]+=std::pow(value,0.82f)*bassProfile;
+        }
     }
-    const auto peak=*std::max_element(hpcp.begin(),hpcp.end());
-    if(peak>0.0f)for(auto& value:hpcp)value=value/peak<0.055f?0.0f:value/peak;
-    return hpcp;
+
+    const auto bassPeak=normalisePeak(result.bassChroma,0.06f);
+    if(bassPeak>0.0f)
+    {
+        const auto bassTotal=std::accumulate(result.bassChroma.begin(),result.bassChroma.end(),0.0f);
+        const auto bassIndex=(size_t)std::distance(result.bassChroma.begin(),
+                                                  std::max_element(result.bassChroma.begin(),
+                                                                   result.bassChroma.end()));
+        if(result.bassChroma[bassIndex]>=0.58f&&bassTotal<=4.5f)
+            result.bassPitchClass=(int)bassIndex;
+    }
+
+    if(result.bassPitchClass>=0)
+        result.chroma[(size_t)result.bassPitchClass]=juce::jmax(result.chroma[(size_t)result.bassPitchClass],
+                                                                result.bassChroma[(size_t)result.bassPitchClass]*0.28f);
+    normalisePeak(result.chroma,0.05f);
+
+    const auto chromaTotal=std::accumulate(result.chroma.begin(),result.chroma.end(),0.0f);
+    auto sorted=result.chroma;
+    std::sort(sorted.begin(),sorted.end(),std::greater<float>());
+    const auto chordToneMass=sorted[0]+sorted[1]+sorted[2]+sorted[3];
+    const auto concentration=chromaTotal>0.001f?chordToneMass/chromaTotal:0.0f;
+    const auto active=countActivePitchClasses(result.chroma);
+    const auto activePenalty=active>=2&&active<=7?1.0f:0.35f;
+    result.confidence=juce::jlimit(0.0f,1.0f,(concentration-0.22f)/0.48f)
+                      *estimateTransientPenalty(samples,frameSize)*activePenalty
+                      *juce::jlimit(0.30f,1.0f,activationSum/3.0f);
+    if(previousChroma!=nullptr)
+        result.changeConfidence=normalisedChromaDistance(result.chroma,*previousChroma);
+    return result;
+}
+
+std::array<float,12> calculateConstantQHpcp(const float* samples,const float* window,int frameSize,double sampleRate,
+                                            int* bassPitchClass)
+{
+    const auto frame=calculateChordinoChromaFrame(samples,window,frameSize,sampleRate);
+    if(bassPitchClass!=nullptr)*bassPitchClass=frame.bassPitchClass;
+    return frame.chroma;
 }
 
 void AudioChordStabilizer::reset()
@@ -1854,8 +2145,7 @@ MidiChordUpdate AudioChordStabilizer::process(const juce::String& chord,float co
     }
 
     const auto advanced=chord.containsChar('9')||chord.contains("11")||chord.contains("13");
-    if(!advanced)return setCurrent(ppq);
-    if(alternatives.contains(currentChord))
+    if(alternatives.contains(currentChord)||currentAlternatives.contains(chord))
     {
         pendingChord.clear();pendingAlternatives.clear();pendingStartPpq=-1.0;pendingObservations=0;
         return {currentChord,ChordUpdateKind::extend,currentConfidence,currentAlternatives,-1.0};
@@ -1870,7 +2160,7 @@ MidiChordUpdate AudioChordStabilizer::process(const juce::String& chord,float co
         ++pendingObservations;pendingConfidence=juce::jmax(pendingConfidence,confidence);
         if(!alternatives.isEmpty())pendingAlternatives=alternatives;
     }
-    const auto observationsRequired=onset?2:3;
+    const auto observationsRequired=advanced?(onset?2:3):2;
     if(pendingObservations<observationsRequired)
         return {currentChord,ChordUpdateKind::extend,currentConfidence,currentAlternatives,-1.0};
 

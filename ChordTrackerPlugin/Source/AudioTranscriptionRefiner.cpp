@@ -213,10 +213,9 @@ private:
             bassFrames.reserve((stableLast-stableFirst)/bassHopSize);
             for(auto first=stableFirst;first+bassFrameSize<=stableLast;first+=bassHopSize)
             {
-                int bass=-1;
-                calculateConstantQHpcp(audio.data()+first,bassWindow.data(),(int)bassFrameSize,
-                                        modelSampleRate,&bass);
-                bassFrames.push_back({first+bassFrameSize/2,bass});
+                const auto frame=calculateChordinoChromaFrame(audio.data()+first,bassWindow.data(),
+                                                               (int)bassFrameSize,modelSampleRate);
+                bassFrames.push_back({first+bassFrameSize/2,frame.bassPitchClass});
             }
         }
         frames.reserve((stableLast-stableFirst)/hopSize);
@@ -229,30 +228,19 @@ private:
                 energy+=(double)audio[first+sample]*audio[first+sample];
             const auto rms=std::sqrt(energy/(double)frameSize);
             if(rms<1.0e-4)continue;
-            int shortBass=-1;
-            const auto weights=calculateConstantQHpcp(audio.data()+first,window.data(),(int)frameSize,
-                                                       modelSampleRate,&shortBass);
+            const auto chordinoFrame=calculateChordinoChromaFrame(audio.data()+first,window.data(),
+                                                                  (int)frameSize,modelSampleRate,
+                                                                  hasPreviousWeights?&previousWeights:nullptr);
+            const auto weights=chordinoFrame.chroma;
             const auto peak=*std::max_element(weights.begin(),weights.end());
             auto activePitchClasses=0;
             for(const auto weight:weights)if(weight>=peak*0.10f&&weight>0.06f)++activePitchClasses;
-            if(peak<=0.0f||activePitchClasses<2||activePitchClasses>7)continue;
-            auto changeConfidence=0.0f;
-            if(hasPreviousWeights)
-            {
-                const auto previousTotal=std::accumulate(previousWeights.begin(),previousWeights.end(),0.0f);
-                const auto currentTotal=std::accumulate(weights.begin(),weights.end(),0.0f);
-                if(previousTotal>0.001f&&currentTotal>0.001f)
-                {
-                    auto distance=0.0f;
-                    for(size_t pitchClass=0;pitchClass<weights.size();++pitchClass)
-                        distance+=std::abs(previousWeights[pitchClass]/previousTotal
-                                          -weights[pitchClass]/currentTotal);
-                    changeConfidence=juce::jlimit(0.0f,1.0f,(distance*0.5f-0.10f)/0.32f);
-                }
-            }
+            if(peak<=0.0f||activePitchClasses<2||activePitchClasses>7||chordinoFrame.confidence<0.06f)
+                continue;
+            auto changeConfidence=chordinoFrame.changeConfidence;
             previousWeights=weights;hasPreviousWeights=true;
             const auto centre=first+frameSize/2;
-            auto bass=shortBass;
+            auto bass=chordinoFrame.bassPitchClass;
             if(!bassFrames.empty())
             {
                 const auto nearest=std::min_element(bassFrames.begin(),bassFrames.end(),[&](const auto& left,
@@ -266,7 +254,9 @@ private:
             const auto supportFirst=centre>=hopSize/2?centre-hopSize/2:first;
             const auto supportLast=juce::jmin(stableLast-1,centre+hopSize/2);
             frames.push_back({captured[supportFirst].ppq,captured[supportLast].ppq,weights,bass,
-                              juce::jlimit(0.15f,1.0f,(float)(rms/0.025)),changeConfidence});
+                              juce::jlimit(0.15f,1.0f,(float)(rms/0.025))
+                                  *chordinoFrame.confidence,
+                              changeConfidence*0.85f});
         }
         stabilizeHarmonicFrames(frames);
         return frames;

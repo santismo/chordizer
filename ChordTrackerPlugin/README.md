@@ -1,11 +1,25 @@
 # Chordizer
 
-Logic Pro Audio Unit plug-ins for synchronized chord analysis.
+Logic Pro Audio Unit MIDI FX for synchronized chord analysis and live Scalizer processing.
+
+## Download and install (macOS)
+
+1. Download **`Chordizer-0.5.0-macos.zip`** from the [latest release](https://github.com/santismo/chordizer/releases/latest).
+2. Double-click the download to unpack `Chordizer.component`.
+3. In Finder, choose **Go > Go to Folder…**, enter `~/Library/Audio/Plug-Ins/Components`, then move `Chordizer.component` into that folder. Replace an older Chordizer component if Finder asks.
+4. Restart Logic Pro. In **Logic Pro > Settings > Plug-in Manager**, find **Santismo: Chordizer** and enable it if needed.
+5. Add it from **MIDI FX > Audio Units > Santismo > Chordizer**.
+
+The release build is ad-hoc signed. If macOS blocks the component, move it to the folder above, run the following command in Terminal, and restart Logic Pro:
+
+```sh
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Chordizer.component
+```
 
 - **Chordizer**: transparent MIDI FX that listens to MIDI regions/live MIDI and records chord regions using host PPQ.
-- **Chordizer Audio**: audio effect with immediate constant-Q/HPCP analysis plus a delayed Basic Pitch neural transcription refiner.
-- Timeline and lead-sheet views are available in both components.
-- MIDI and Audio component instances share transport, chord regions, edits, candidates, and typography through a cross-process mapped session.
+- Scalizer mode includes a post-processing MIDI recorder. Its exported take preserves output notes, harmonies, channels, velocities, controllers, and sample-position-derived PPQ timing, with the file beginning at the bar containing the first event so leading silence is retained.
+- Timeline and lead-sheet views are available in the Chordizer MIDI FX component.
+- Chordizer instances share transport, chord regions, edits, candidates, and typography through a cross-process mapped session.
 - Live HPCP and neural capture use the same allocation-free, phase-safe stereo downmix, preserving chord energy when channels have opposite polarity. Audio is captured into a fixed-capacity real-time-safe ring with interpolating conversion from the host sample rate to 22.05 kHz. Eight-second overlapping neural windows run on a low-priority worker and backfill PPQ-aligned regions without blocking Logic's audio thread.
 - Neural analysis copies receive bounded automatic gain for quiet recordings, with peak limiting confined to the analysis buffer; plug-in passthrough is never changed. True silence bypasses inference and clears stale unlocked Audio estimates in the analyzed span.
 - Each neural window is decoded at sensitive and strict thresholds. Notes supported by both passes gain confidence; weak unmatched notes are down-weighted before chord naming to reduce false extensions.

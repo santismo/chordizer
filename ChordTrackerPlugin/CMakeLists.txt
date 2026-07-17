@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
-project(Chordizer VERSION 0.2.0 LANGUAGES C CXX)
+project(Chordizer VERSION 0.5.0 LANGUAGES C CXX)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 
 set(JUCE_DIR "" CACHE PATH "Path to a JUCE checkout")
 option(CHORDIZER_FETCH_JUCE "Download the pinned JUCE release when JUCE_DIR is not set" ON)
@@ -53,7 +56,11 @@ set_target_properties(ChordizerOnnxRuntime PROPERTIES
 
 set(CHORDIZER_SOURCES
     Source/ChordEngine.cpp Source/ChordEngine.h
+    Source/ScalizerEngine.cpp Source/ScalizerEngine.h
+    Source/ScalizerMidiRecorder.cpp Source/ScalizerMidiRecorder.h
     Source/MidiExport.cpp Source/MidiExport.h
+    Source/MidiImport.cpp Source/MidiImport.h
+    Source/MacMidiDropBridge.mm Source/MacMidiDropBridge.h
     Source/PluginProcessor.cpp Source/PluginProcessor.h
     Source/PluginEditor.cpp Source/PluginEditor.h)
 
@@ -81,20 +88,6 @@ function(configure_chordizer target product bundle code main_type midi_effect au
 endfunction()
 
 configure_chordizer(ChordizerMidi "Chordizer" "com.santismo.chordizer.midi" "Chrz" kAudioUnitType_MIDIProcessor TRUE 0)
-configure_chordizer(ChordizerAudio "Chordizer Audio" "com.santismo.chordizer.audio" "ChzA" kAudioUnitType_Effect FALSE 1)
-
-target_sources(ChordizerAudio PRIVATE
-    Source/AudioTranscriptionRefiner.cpp Source/AudioTranscriptionRefiner.h
-    ${NEURALNOTE_DIR}/Model/BasicPitch.cpp
-    ${NEURALNOTE_DIR}/Model/Features.cpp
-    ${NEURALNOTE_DIR}/Model/Notes.cpp)
-target_include_directories(ChordizerAudio SYSTEM PRIVATE
-    ${NEURALNOTE_DIR}/Model
-    ${NEURALNOTE_DIR}/Utils
-    ${CMAKE_CURRENT_LIST_DIR}/ThirdParty/onnxruntime/include)
-target_compile_definitions(ChordizerAudio PRIVATE SAVE_DOWNSAMPLED_AUDIO=0 USE_TEST_NOTE_FRAME_TO_TIME=0)
-target_link_libraries(ChordizerAudio PRIVATE
-    ChordizerBasicPitchCNN ChordizerOnnxRuntime ChordizerNeuralData)
 set_source_files_properties(
     ${NEURALNOTE_DIR}/Model/BasicPitch.cpp
     ${NEURALNOTE_DIR}/Model/Features.cpp
@@ -104,7 +97,10 @@ set_source_files_properties(
 juce_add_console_app(ChordizerEngineTests PRODUCT_NAME "Chordizer Engine Tests")
 juce_generate_juce_header(ChordizerEngineTests)
 target_sources(ChordizerEngineTests PRIVATE Source/ChordEngine.cpp Source/ChordEngine.h
-    Source/MidiExport.cpp Source/MidiExport.h Tests/ChordEngineTests.cpp)
+    Source/ScalizerEngine.cpp Source/ScalizerEngine.h
+    Source/ScalizerMidiRecorder.cpp Source/ScalizerMidiRecorder.h
+    Source/MidiExport.cpp Source/MidiExport.h
+    Source/MidiImport.cpp Source/MidiImport.h Tests/ChordEngineTests.cpp)
 target_compile_features(ChordizerEngineTests PRIVATE cxx_std_17)
 target_compile_definitions(ChordizerEngineTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(ChordizerEngineTests PRIVATE juce::juce_audio_basics

@@ -1,6 +1,8 @@
 #include <JuceHeader.h>
 #include "../Source/ChordEngine.h"
 #include "../Source/MidiExport.h"
+#include "../Source/MidiImport.h"
+#include "../Source/ScalizerEngine.h"
 #include <iostream>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -42,7 +44,7 @@ juce::String identifyHarmonicAudio(std::initializer_list<double> frequencies)
         audio[(size_t)i]=(float)(sample/juce::jmax(1,(int)frequencies.size()));
     }
     const auto profile=calculateConstantQHpcp(audio.data(),window.data(),size,rate);
-    float confidence=0.0f;return identifyChord(profile,confidence);
+    float confidence=0.0f;return identifyChord(profile,confidence,-1,nullptr,nullptr,0.08f);
 }
 }
 
@@ -95,6 +97,167 @@ int main(int argc,char** argv)
     expect(weakAlteredName=="F#7",
            "A weak audio b9 overtone does not promote a dominant seventh to 7b9");
     expect(identify({59,62,66,70})=="BmMaj7","Explicit MIDI minor-major seventh remains available");
+
+    const std::vector<ChordRegionData> scalizerProgression {
+        {0.0,4.0,"F","Test",1.0f,{},false}, {4.0,8.0,"C","Test",1.0f,{},false},
+        {8.0,12.0,"G7","Test",1.0f,{},false}, {12.0,16.0,"C","Test",1.0f,{},false}
+    };
+    const auto inferredC=inferScalizerScale(scalizerProgression,1);
+    expect(inferredC.valid&&inferredC.name=="C major","adjacent chords resolve an ambiguous major chord to the shared key");
+    expect(inferredC.scalePitchClasses[0]&&inferredC.scalePitchClasses[2]&&inferredC.scalePitchClasses[4]
+           &&inferredC.scalePitchClasses[5]&&inferredC.scalePitchClasses[7]&&inferredC.scalePitchClasses[9]
+           &&inferredC.scalePitchClasses[11]&&!inferredC.scalePitchClasses[1],
+           "inferred C-major scale exposes the correct pitch mask");
+    const std::vector<ChordRegionData> alteredProgression {{0.0,4.0,"G7b9","Test",1.0f,{},false}};
+    const auto inferredAltered=inferScalizerScale(alteredProgression,0);
+    expect(inferredAltered.valid&&inferredAltered.scalePitchClasses[8]
+           &&inferredAltered.chordPitchClasses[11]&&inferredAltered.chordPitchClasses[5],
+           "altered dominant inference contains every written chord tone");
+    expect(inferredAltered.name=="G half-whole diminished",
+           "flat-nine dominants select the chord-local half-whole diminished scale");
+    const std::vector<ChordRegionData> hostileNeighbours {
+        {0.0,4.0,"Dbmaj7","Test",1.0f,{},false}, {4.0,8.0,"G7","Test",1.0f,{},false},
+        {8.0,12.0,"Amaj7","Test",1.0f,{},false}
+    };
+    expect(inferScalizerScale(hostileNeighbours,1).name=="G Mixolydian",
+           "unrelated neighbouring chords do not pull a dominant away from its chord-local scale");
+    const std::vector<ChordRegionData> lydianDominantRegion {{0.0,4.0,"G7#11","Test",1.0f,{},false}};
+    expect(inferScalizerScale(lydianDominantRegion,0).name=="G Lydian dominant",
+           "sharp-eleven dominants select Lydian dominant");
+    const std::vector<ChordRegionData> alteredDominantRegion {{0.0,4.0,"G7#9","Test",1.0f,{},false}};
+    expect(inferScalizerScale(alteredDominantRegion,0).name=="G altered",
+           "sharp-nine dominants select the altered scale even when the voicing retains its fifth");
+    auto manualScaleProgression=scalizerProgression;
+    manualScaleProgression[1].scaleOverride="F# melodic minor";
+    const auto manualScale=inferScalizerScale(manualScaleProgression,1);
+    expect(manualScale.name=="F# melodic minor"&&manualScale.rootPitchClass==6
+           &&manualScale.scalePitchClasses[9]&&!manualScale.scalePitchClasses[10],
+           "a manual region scale overrides automatic inference exactly");
+
+    ScalizerEngine scalizer;
+    juce::MidiBuffer scalizerMidi;
+    scalizerMidi.addEvent(juce::MidiMessage::noteOn(1,61,(juce::uint8)100),0);
+    scalizerMidi.addEvent(juce::MidiMessage::noteOff(1,61,(juce::uint8)0),32);
+    std::array<ScalizerHarmonyVoice,3> harmonyVoices {{{3,true},{0,true},{0,true}}};
+    const std::vector<ChordRegionData> cRegion {{0.0,4.0,"C","Test",1.0f,{},false}};
+    scalizer.process(scalizerMidi,cRegion,0.0,120.0,48000.0,ScalizerLockMode::chordTones,harmonyVoices);
+    std::vector<int> scalizerOns,scalizerOffs;
+    for(const auto metadata:scalizerMidi)
+    {
+        const auto message=metadata.getMessage();
+        if(message.isNoteOn())scalizerOns.push_back(message.getNoteNumber());
+        if(message.isNoteOff())scalizerOffs.push_back(message.getNoteNumber());
+    }
+    std::sort(scalizerOns.begin(),scalizerOns.end());std::sort(scalizerOffs.begin(),scalizerOffs.end());
+    expect(scalizerOns==std::vector<int>({64,67}),"chord lock maps each chromatic key to a chord degree before adding harmony");
+    expect(scalizerOffs==scalizerOns,"generated Scalizer voices receive matching note-offs");
+
+    juce::MidiBuffer octaveWrapMidi;
+    octaveWrapMidi.addEvent(juce::MidiMessage::noteOn(1,60,(juce::uint8)100),0);
+    octaveWrapMidi.addEvent(juce::MidiMessage::noteOff(1,60,(juce::uint8)0),32);
+    const std::vector<ChordRegionData> cSharpMajorRegion {{0.0,4.0,"C#maj7","Test",1.0f,{},false}};
+    scalizer.process(octaveWrapMidi,cSharpMajorRegion,0.0,120.0,48000.0,
+                     ScalizerLockMode::chordTones,harmonyVoices);
+    std::vector<int> octaveWrapOns,octaveWrapOffs;
+    for(const auto metadata:octaveWrapMidi)
+    {
+        const auto message=metadata.getMessage();
+        if(message.isNoteOn())octaveWrapOns.push_back(message.getNoteNumber());
+        if(message.isNoteOff())octaveWrapOffs.push_back(message.getNoteNumber());
+    }
+    std::sort(octaveWrapOns.begin(),octaveWrapOns.end());
+    std::sort(octaveWrapOffs.begin(),octaveWrapOffs.end());
+    expect(octaveWrapOns==std::vector<int>({60,65}),
+           "C over C#maj7 adds the nearby chord third without an unwanted octave jump");
+    expect(octaveWrapOffs==octaveWrapOns,"octave-wrap harmony notes retain matching note-offs");
+
+    juce::MidiBuffer scaleWrapMidi;
+    scaleWrapMidi.addEvent(juce::MidiMessage::noteOn(1,60,(juce::uint8)100),0);
+    scaleWrapMidi.addEvent(juce::MidiMessage::noteOff(1,60,(juce::uint8)0),32);
+    scalizer.process(scaleWrapMidi,cSharpMajorRegion,0.0,120.0,48000.0,
+                     ScalizerLockMode::scale,harmonyVoices);
+    std::vector<int> scaleWrapOns;
+    for(const auto metadata:scaleWrapMidi)
+        if(metadata.getMessage().isNoteOn())scaleWrapOns.push_back(metadata.getMessage().getNoteNumber());
+    std::sort(scaleWrapOns.begin(),scaleWrapOns.end());
+    expect(scaleWrapOns==std::vector<int>({60,63}),
+           "scale-lock thirds cross the C# tonic boundary in the nearest register");
+
+    std::array<ScalizerHarmonyVoice,3> noHarmony {};
+    juce::MidiBuffer chromaticScaleMidi;
+    for(int offset=0;offset<8;++offset)
+    {
+        chromaticScaleMidi.addEvent(juce::MidiMessage::noteOn(1,60+offset,(juce::uint8)100),offset*2);
+        chromaticScaleMidi.addEvent(juce::MidiMessage::noteOff(1,60+offset,(juce::uint8)0),offset*2+1);
+    }
+    scalizer.process(chromaticScaleMidi,cRegion,0.0,120.0,48000.0,
+                     ScalizerLockMode::scale,noHarmony);
+    std::vector<int> chromaticScaleOns;
+    for(const auto metadata:chromaticScaleMidi)
+        if(metadata.getMessage().isNoteOn())chromaticScaleOns.push_back(metadata.getMessage().getNoteNumber());
+    expect(chromaticScaleOns==std::vector<int>({60,62,64,65,67,69,71,72}),
+           "chromatic input walks every scale degree without repeated mapped notes");
+
+    juce::MidiBuffer chromaticChordMidi;
+    for(int offset=0;offset<5;++offset)
+    {
+        chromaticChordMidi.addEvent(juce::MidiMessage::noteOn(1,60+offset,(juce::uint8)100),offset*2);
+        chromaticChordMidi.addEvent(juce::MidiMessage::noteOff(1,60+offset,(juce::uint8)0),offset*2+1);
+    }
+    scalizer.process(chromaticChordMidi,cRegion,0.0,120.0,48000.0,
+                     ScalizerLockMode::chordTones,noHarmony);
+    std::vector<int> chromaticChordOns;
+    for(const auto metadata:chromaticChordMidi)
+        if(metadata.getMessage().isNoteOn())chromaticChordOns.push_back(metadata.getMessage().getNoteNumber());
+    expect(chromaticChordOns==std::vector<int>({60,64,67,72,76}),
+           "chromatic input walks every chord tone without repeated mapped notes");
+
+    ScalizerMidiRecorder outputRecorder;
+    outputRecorder.start(120.0,4,4);
+    juce::MidiBuffer processedTakeMidi;
+    processedTakeMidi.addEvent(juce::MidiMessage::noteOn(2,64,(juce::uint8)91),0);
+    processedTakeMidi.addEvent(juce::MidiMessage::controllerEvent(2,1,72),12000);
+    processedTakeMidi.addEvent(juce::MidiMessage::noteOff(2,64,(juce::uint8)33),24000);
+    outputRecorder.process(processedTakeMidi,5.25,120.0,48000.0,true,4,4);
+    outputRecorder.stop(6.5);
+    const auto recordedTake=outputRecorder.snapshot();
+    expect(recordedTake.events.size()==3&&std::abs(recordedTake.firstPpq-5.25)<0.000001
+           &&std::abs(recordedTake.events[1].ppq-5.75)<0.000001
+           &&std::abs(recordedTake.events[2].ppq-6.25)<0.000001,
+           "post-Scalizer recorder converts sample positions to exact host PPQ timing");
+    expect(std::abs(scalizerRecordingBarOrigin(recordedTake)-4.0)<0.000001,
+           "recorded take export starts at the containing bar before the first event");
+    const auto recordedMidiFile=createScalizerRecordingMidiFile(recordedTake);
+    const auto* recordedTrack=recordedMidiFile.getTrack(0);
+    auto recordedNoteOnTick=-1.0,recordedNoteOffTick=-1.0;auto recordedVelocity=-1,recordedChannel=-1;
+    if(recordedTrack!=nullptr)for(int event=0;event<recordedTrack->getNumEvents();++event)
+    {
+        const auto message=recordedTrack->getEventPointer(event)->message;
+        if(message.isNoteOn())
+        {
+            recordedNoteOnTick=message.getTimeStamp();recordedVelocity=message.getVelocity();recordedChannel=message.getChannel();
+        }
+        else if(message.isNoteOff())recordedNoteOffTick=message.getTimeStamp();
+    }
+    expect(recordedNoteOnTick==1200.0&&recordedNoteOffTick==2160.0,
+           "export retains leading bar silence and the performed note duration at 960 PPQ");
+    expect(recordedVelocity==91&&recordedChannel==2,
+           "post-Scalizer export preserves output velocity and MIDI channel");
+
+    ScalizerMidiRecorder hangingNoteRecorder;
+    hangingNoteRecorder.start(120.0,4,4);
+    juce::MidiBuffer hangingNoteMidi;
+    hangingNoteMidi.addEvent(juce::MidiMessage::noteOn(1,67,(juce::uint8)100),0);
+    hangingNoteRecorder.process(hangingNoteMidi,9.0,120.0,48000.0,true,4,4);
+    hangingNoteRecorder.stop(10.0);
+    const auto closedMidiFile=createScalizerRecordingMidiFile(hangingNoteRecorder.snapshot());
+    const auto* closedTrack=closedMidiFile.getTrack(0);auto closedNoteOffTick=-1.0;
+    if(closedTrack!=nullptr)for(int event=0;event<closedTrack->getNumEvents();++event)
+    {
+        const auto message=closedTrack->getEventPointer(event)->message;
+        if(message.isNoteOff()&&message.getNoteNumber()==67)closedNoteOffTick=message.getTimeStamp();
+    }
+    expect(closedNoteOffTick==1920.0,"export closes notes still held when the internal recorder stops");
 
     std::vector<PitchedNoteRegion> transcribedProgression;
     const auto addTranscribedChord=[&](double start,double end,std::initializer_list<int> pitches)
@@ -340,23 +503,36 @@ int main(int argc,char** argv)
     const auto inversionTail=audioStabilizer.process("Ebmaj7/D",0.65f,{},1.0,false);
     expect(inversionTail.kind==ChordUpdateKind::extend&&inversionTail.chord=="Ebmaj7",
            "bass fluctuation does not split an established chord");
-    const auto fMinorChange=audioStabilizer.process("Fm7",0.9f,{},4.0,false);
+    const auto fMinorPending=audioStabilizer.process("Fm7",0.9f,{},4.0,false);
+    expect(fMinorPending.kind==ChordUpdateKind::extend&&fMinorPending.chord=="Ebmaj7",
+           "a single simple Audio candidate does not split the current region");
+    const auto fMinorChange=audioStabilizer.process("Fm7",0.9f,{},5.0,false);
     expect(fMinorChange.chord=="Fm7"&&fMinorChange.kind==ChordUpdateKind::start,
-           "Audio stabilizer accepts a simple chord change even when onset detection misses it");
+           "repeated simple Audio candidates confirm a chord change at the first observation");
+    expect(std::abs(fMinorChange.regionStartPpq-4.0)<0.000001,
+           "confirmed simple Audio changes preserve their original boundary");
     juce::StringArray fMinorAlternative;fMinorAlternative.add("Fm7");
     expect(audioStabilizer.process("Abm13",0.55f,fMinorAlternative,6.0).chord=="Fm7",
            "brief complex Audio candidate does not split an established chord");
     expect(audioStabilizer.process("Abm13",0.55f,fMinorAlternative,7.0).chord=="Fm7",
            "repeated noisy candidate still preserves a supported current chord");
-    const auto dominantChange=audioStabilizer.process("Bb7",0.9f,{},8.0,false);
+    const auto dominantPending=audioStabilizer.process("Bb7",0.9f,{},8.0,false);
+    expect(dominantPending.chord=="Fm7"&&dominantPending.kind==ChordUpdateKind::extend,
+           "one simple dominant candidate is not enough to split an Audio region");
+    const auto dominantChange=audioStabilizer.process("Bb7",0.9f,{},9.0,false);
     expect(dominantChange.chord=="Bb7"&&dominantChange.kind==ChordUpdateKind::start,
-           "next simple dominant replaces the rejected candidate without an onset gate");
+           "repeated simple dominant replaces the rejected advanced candidate");
     expect(audioStabilizer.process("Abmaj9#11",0.55f,{},10.0,false).chord=="Bb7"
            &&audioStabilizer.process("Abmaj9#11",0.55f,{},11.0,false).chord=="Bb7",
            "two-beat advanced false positive does not split a dominant region");
-    expect(audioStabilizer.process("Ebmaj7",0.9f,{},12.0).chord=="Ebmaj7",
-           "reported progression resolves back to Eb major seventh");
-    expect(audioStabilizer.process("Eb5",0.55f,{},13.0,false).chord=="Ebmaj7",
+    const auto returnHomePending=audioStabilizer.process("Ebmaj7",0.9f,{},12.0);
+    expect(returnHomePending.chord=="Bb7"&&returnHomePending.kind==ChordUpdateKind::extend,
+           "one simple return-home Audio candidate does not split the dominant region");
+    const auto returnHomeConfirmed=audioStabilizer.process("Ebmaj7",0.9f,{},13.0);
+    expect(returnHomeConfirmed.chord=="Ebmaj7"&&returnHomeConfirmed.kind==ChordUpdateKind::start
+           &&std::abs(returnHomeConfirmed.regionStartPpq-12.0)<0.000001,
+           "reported progression resolves back to Eb major seventh after confirmation");
+    expect(audioStabilizer.process("Eb5",0.55f,{},14.0,false).chord=="Ebmaj7",
            "decaying power-chord tail does not split an established seventh chord");
     audioStabilizer.reset();audioStabilizer.process("C",0.9f,{},0.0);
     audioStabilizer.process("Cmaj9",0.8f,{},1.0,false);audioStabilizer.process("Cmaj9",0.8f,{},2.0,false);
@@ -441,20 +617,27 @@ int main(int argc,char** argv)
     expect(snapshot.regions.size() == 2, "refinement does not create another region");
     expect(snapshot.regions.front().name == "Cmaj7", "refinement renames the active region");
     expect(std::abs(snapshot.regions.front().endPpq - 1.25) < 0.000001, "adjacent regions share a boundary without overlap");
+    session.setRegionScaleOverride(0,"F# melodic minor");
+    expect(session.snapshot().regions.front().scaleOverride=="F# melodic minor"
+           &&session.snapshot().regions.front().locked,
+           "manual scale overrides persist in the shared session and protect their region");
     session.renameRegion(0,"C6");
-    expect(session.snapshot().regions.front().name=="C6","manual region rename");
+    expect(session.snapshot().regions.front().name=="C6"
+           &&session.snapshot().regions.front().scaleOverride.isEmpty(),
+           "manual region rename returns scale selection to Auto");
     session.renameRegion(1,"Dm7");
     session.publishChord(1.4,"D7","MIDI",1.0f,ChordUpdateKind::refine);
     expect(session.snapshot().regions[1].name=="Dm7","manual rename is locked against live refinement");
     session.deleteRegion(0);
     expect(session.snapshot().regions.size()==1,"manual region deletion");
     const auto deletedSnapshot=session.snapshot().regions;
-    std::vector<ChordRegionData> restoredRegions{{0.0,1.0,"C","Audio",0.8f,{"Cm"},true},
+    std::vector<ChordRegionData> restoredRegions{{0.0,1.0,"C","Audio",0.8f,{"Cm"},true,"C Lydian"},
                                                   {1.0,2.0,"G7","MIDI",0.9f,{},false}};
     session.replaceRegions(restoredRegions);
     const auto restoredSnapshot=session.snapshot();
     expect(restoredSnapshot.regions.size()==2&&restoredSnapshot.regions[0].name=="C"
-           &&restoredSnapshot.regions[0].source=="Audio"&&restoredSnapshot.regions[0].locked,
+           &&restoredSnapshot.regions[0].source=="Audio"&&restoredSnapshot.regions[0].locked
+           &&restoredSnapshot.regions[0].scaleOverride=="C Lydian",
            "shared region snapshots restore complete undo state");
     session.replaceRegions(deletedSnapshot);
 
@@ -498,6 +681,41 @@ int main(int argc,char** argv)
     expect(!slashVoicing.empty()&&slashVoicing.front()==36,
            "MIDI export places a slash bass below the chord voicing");
 
+    const std::vector<ChordRegionData> importFixtureRegions{{12.0,16.0,"Cmaj7","MIDI",1.0f,{},false},
+                                                            {16.0,20.0,"Fm7","MIDI",1.0f,{},false}};
+    const auto midiImportFile=juce::File::getSpecialLocation(juce::File::tempDirectory)
+        .getNonexistentChildFile("chordizer-import-test",".mid",false);
+    expect(writeChordizerMidiFile(importFixtureRegions,120.0,4,4,midiImportFile),
+           "MIDI import fixture can be written");
+    const auto importedMidi=importChordizerMidiFile(midiImportFile,32.0);
+    if(!importedMidi.error.isEmpty())std::cerr<<"MIDI import error: "<<importedMidi.error<<'\n';
+    expect(importedMidi.succeeded()&&importedMidi.noteCount>=8,
+           "MIDI import parses a standard MIDI file");
+    if(importedMidi.regions.size()>=2)
+    {
+        expect(std::abs(importedMidi.regions[0].startPpq-32.0)<0.000001
+               &&importedMidi.regions[0].source=="MIDI"&&!importedMidi.regions[0].locked,
+               "MIDI import aligns the first note to the requested playhead");
+        expect(importedMidi.regions[0].name=="Cmaj7"&&importedMidi.regions[1].name=="Fm7",
+               "MIDI import detects chord regions from imported notes");
+    }
+    midiImportFile.deleteFile();
+
+    const std::vector<ChordRegionData> existingForImport{{0.0,4.0,"C","Audio",0.8f,{},false},
+                                                         {4.0,8.0,"Dm7","MIDI",1.0f,{},true},
+                                                         {8.0,12.0,"G7","Audio",0.7f,{},false}};
+    const std::vector<ChordRegionData> importedForMerge{{2.0,6.0,"F","MIDI",0.9f,{},false},
+                                                        {6.0,10.0,"Bb","MIDI",0.9f,{},false}};
+    const auto mergedImport=mergeChordizerImportedMidiRegions(existingForImport,importedForMerge);
+    expect(mergedImport.size()==5
+           &&mergedImport[0].name=="C"&&std::abs(mergedImport[0].endPpq-2.0)<0.000001
+           &&mergedImport[1].name=="F"&&std::abs(mergedImport[1].startPpq-2.0)<0.000001
+           &&std::abs(mergedImport[1].endPpq-4.0)<0.000001
+           &&mergedImport[2].name=="Dm7"&&mergedImport[2].locked
+           &&mergedImport[3].name=="Bb"&&std::abs(mergedImport[3].startPpq-8.0)<0.000001
+           &&mergedImport[4].name=="G7"&&std::abs(mergedImport[4].startPpq-10.0)<0.000001,
+           "MIDI import merge replaces unlocked overlap while preserving and blocking locked edits");
+
     session.replaceRegions({{0.0,4.0,"C","Audio",0.6f,{},false},
                             {4.0,8.0,"G7","MIDI",0.95f,{},false},
                             {8.0,12.0,"Am","Audio",1.0f,{},true}});
@@ -531,6 +749,16 @@ int main(int argc,char** argv)
     expect(decaySeam.regions.size()==1&&decaySeam.regions.front().name=="Ebmaj7"
            &&std::abs(decaySeam.regions.front().endPpq-5.0)<0.000001,
            "a simple decay label spanning neural windows merges into the surrounding extension");
+    session.replaceRegions({});
+    session.replaceAudioRegions(0.0,4.0,{{0.0,1.20,"C","Audio",0.82f,{},false},
+                                         {1.20,1.55,"F#","Audio",0.40f,{},false},
+                                         {1.55,2.40,"C","Audio",0.84f,{},false},
+                                         {2.40,2.75,"D","Audio",0.42f,{},false},
+                                         {2.75,4.0,"C","Audio",0.83f,{},false}});
+    const auto deflickeredAudio=session.snapshot();
+    expect(deflickeredAudio.regions.size()==1&&deflickeredAudio.regions.front().name=="C"
+           &&std::abs(deflickeredAudio.regions.front().endPpq-4.0)<0.000001,
+           "short low-confidence refined Audio fragments collapse into the stable surrounding chord");
     session.replaceRegions(deletedSnapshot);
 
     SharedChordSession peerSession;
@@ -598,6 +826,51 @@ int main(int argc,char** argv)
     expect(!inPhasePlan.weightedStereo
            &&std::abs(phaseSafeDownmixSample(antiPhaseStereo,100,inPhasePlan)-audio[100])<0.000001f,
            "correlated stereo uses the ordinary average");
+
+    std::array<float,frameSize> fullMix{};
+    auto noiseState=uint32_t{0x12345678};
+    auto noise=[&]() mutable
+    {
+        noiseState=noiseState*1664525u+1013904223u;
+        return ((float)((noiseState>>8)&0xffff)/32768.0f)-1.0f;
+    };
+    const auto addTone=[&](double frequency,float gain,int harmonics)
+    {
+        for(int i=0;i<frameSize;++i)
+        {
+            const auto time=i/rate;
+            auto sample=0.0;
+            for(int harmonic=1;harmonic<=harmonics;++harmonic)
+                sample+=std::sin(2.0*juce::MathConstants<double>::pi*frequency*(double)harmonic*time)
+                        /(double)(harmonic*harmonic);
+            fullMix[(size_t)i]+=(float)sample*gain;
+        }
+    };
+    addTone(65.4064,0.48f,8);
+    addTone(164.8138,0.34f,6);
+    addTone(195.9977,0.32f,6);
+    addTone(246.9417,0.26f,5);
+    addTone(587.3295,0.18f,2);
+    for(int i=0;i<frameSize;++i)
+    {
+        const auto pulse=i%4096;
+        const auto snare=pulse<360?std::exp(-(double)pulse/72.0)*noise()*0.42:0.0;
+        const auto kick=pulse<900?std::sin(2.0*juce::MathConstants<double>::pi*58.0*(double)i/rate)
+                                  *std::exp(-(double)pulse/210.0)*0.32:0.0;
+        fullMix[(size_t)i]+=(float)(snare+kick);
+    }
+    const auto chordinoFrame=calculateChordinoChromaFrame(fullMix.data(),window.data(),frameSize,rate);
+    float fullMixConfidence=0.0f;juce::StringArray fullMixAlternatives;
+    const auto fullMixChord=identifyChord(chordinoFrame.chroma,fullMixConfidence,
+                                          chordinoFrame.bassPitchClass,&fullMixAlternatives,nullptr,0.08f);
+    if(!fullMixChord.startsWithChar('C'))
+        std::cerr<<"Full-mix Chordino-style frame detected as "<<fullMixChord
+                 <<" bass "<<chordinoFrame.bassPitchClass
+                 <<" confidence "<<chordinoFrame.confidence<<'\n';
+    expect(fullMixChord.startsWithChar('C')&&chordinoFrame.bassPitchClass==0
+           &&chordinoFrame.confidence>0.10f,
+           "Chordino-style chroma ignores drum transients and high melody while preserving the C bass");
+
     const auto harmonicC=identifyHarmonicAudio({130.8128,164.8138,195.9977});
     const auto harmonicDm=identifyHarmonicAudio({146.8324,174.6141,220.0});
     const auto harmonicG7=identifyHarmonicAudio({97.9989,123.4708,146.8324,174.6141});
