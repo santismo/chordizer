@@ -3,6 +3,20 @@
 Chordizer is an open-source pair of Audio Unit plug-ins for Logic Pro that
 turn MIDI or audio into a synchronized, editable chord track.
 
+## Download and install Chordizer (macOS)
+
+1. Download **`Chordizer-0.5.0-macos.zip`** from the [latest release](https://github.com/santismo/chordizer/releases/latest).
+2. Double-click the download to unpack `Chordizer.component`.
+3. In Finder, choose **Go > Go to Folder…**, enter `~/Library/Audio/Plug-Ins/Components`, then move `Chordizer.component` into that folder. Replace an older Chordizer component if Finder asks.
+4. Restart Logic Pro. In **Logic Pro > Settings > Plug-in Manager**, find **Santismo: Chordizer** and enable it if needed.
+5. Add it from **MIDI FX > Audio Units > Santismo > Chordizer**.
+
+The release build is ad-hoc signed. If macOS blocks the component, move it to the folder above, run the following command in Terminal, and restart Logic Pro:
+
+```sh
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/Chordizer.component
+```
+
 ## Components
 
 - **Chordizer** is a MIDI FX plug-in that groups incoming notes into
