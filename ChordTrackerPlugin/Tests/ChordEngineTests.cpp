@@ -149,7 +149,7 @@ int main(int argc,char** argv)
         if(message.isNoteOff())scalizerOffs.push_back(message.getNoteNumber());
     }
     std::sort(scalizerOns.begin(),scalizerOns.end());std::sort(scalizerOffs.begin(),scalizerOffs.end());
-    expect(scalizerOns==std::vector<int>({64,67}),"chord lock maps each chromatic key to a chord degree before adding harmony");
+    expect(scalizerOns==std::vector<int>({64,67}),"successive performance keys advance through chord tones before adding harmony");
     expect(scalizerOffs==scalizerOns,"generated Scalizer voices receive matching note-offs");
 
     juce::MidiBuffer octaveWrapMidi;
@@ -167,8 +167,8 @@ int main(int argc,char** argv)
     }
     std::sort(octaveWrapOns.begin(),octaveWrapOns.end());
     std::sort(octaveWrapOffs.begin(),octaveWrapOffs.end());
-    expect(octaveWrapOns==std::vector<int>({60,65}),
-           "C over C#maj7 adds the nearby chord third without an unwanted octave jump");
+    expect(octaveWrapOns==std::vector<int>({61,65}),
+           "middle C becomes the nearby C# chord root without an unwanted octave jump");
     expect(octaveWrapOffs==octaveWrapOns,"octave-wrap harmony notes retain matching note-offs");
 
     juce::MidiBuffer scaleWrapMidi;
@@ -180,8 +180,8 @@ int main(int argc,char** argv)
     for(const auto metadata:scaleWrapMidi)
         if(metadata.getMessage().isNoteOn())scaleWrapOns.push_back(metadata.getMessage().getNoteNumber());
     std::sort(scaleWrapOns.begin(),scaleWrapOns.end());
-    expect(scaleWrapOns==std::vector<int>({60,63}),
-           "scale-lock thirds cross the C# tonic boundary in the nearest register");
+    expect(scaleWrapOns==std::vector<int>({61,65}),
+           "middle C becomes the nearby C# scale root and retains local-register harmony");
 
     std::array<ScalizerHarmonyVoice,3> noHarmony {};
     juce::MidiBuffer chromaticScaleMidi;
@@ -196,7 +196,7 @@ int main(int argc,char** argv)
     for(const auto metadata:chromaticScaleMidi)
         if(metadata.getMessage().isNoteOn())chromaticScaleOns.push_back(metadata.getMessage().getNoteNumber());
     expect(chromaticScaleOns==std::vector<int>({60,62,64,65,67,69,71,72}),
-           "chromatic input walks every scale degree without repeated mapped notes");
+           "scale lock maps consecutive keys to consecutive scale tones without duplicates");
 
     juce::MidiBuffer chromaticChordMidi;
     for(int offset=0;offset<5;++offset)
@@ -210,7 +210,21 @@ int main(int argc,char** argv)
     for(const auto metadata:chromaticChordMidi)
         if(metadata.getMessage().isNoteOn())chromaticChordOns.push_back(metadata.getMessage().getNoteNumber());
     expect(chromaticChordOns==std::vector<int>({60,64,67,72,76}),
-           "chromatic input walks every chord tone without repeated mapped notes");
+           "chord lock maps consecutive keys to consecutive chord tones without duplicates");
+
+    juce::MidiBuffer descendingChordMidi;
+    for(int offset=0;offset<4;++offset)
+    {
+        descendingChordMidi.addEvent(juce::MidiMessage::noteOn(1,60-offset,(juce::uint8)100),offset*2);
+        descendingChordMidi.addEvent(juce::MidiMessage::noteOff(1,60-offset,(juce::uint8)0),offset*2+1);
+    }
+    scalizer.process(descendingChordMidi,cRegion,0.0,120.0,48000.0,
+                     ScalizerLockMode::chordTones,noHarmony);
+    std::vector<int> descendingChordOns;
+    for(const auto metadata:descendingChordMidi)
+        if(metadata.getMessage().isNoteOn())descendingChordOns.push_back(metadata.getMessage().getNoteNumber());
+    expect(descendingChordOns==std::vector<int>({60,55,52,48}),
+           "keys below middle C walk downward through distinct chord tones");
 
     ScalizerMidiRecorder outputRecorder;
     outputRecorder.start(120.0,4,4);

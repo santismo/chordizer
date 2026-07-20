@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Chordizer VERSION 0.5.0 LANGUAGES C CXX)
+project(Chordizer VERSION 2.0.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJCXX)
 endif()
@@ -105,6 +105,15 @@ target_compile_features(ChordizerEngineTests PRIVATE cxx_std_17)
 target_compile_definitions(ChordizerEngineTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(ChordizerEngineTests PRIVATE juce::juce_audio_basics
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+
+juce_add_console_app(ChordizerEditorScreenshot PRODUCT_NAME "Chordizer Editor Screenshot")
+juce_generate_juce_header(ChordizerEditorScreenshot)
+target_sources(ChordizerEditorScreenshot PRIVATE Tests/EditorScreenshot.cpp)
+target_include_directories(ChordizerEditorScreenshot PRIVATE Source)
+target_compile_features(ChordizerEditorScreenshot PRIVATE cxx_std_17)
+target_compile_definitions(ChordizerEditorScreenshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 CHORDIZER_AUDIO_FX=0)
+target_link_libraries(ChordizerEditorScreenshot PRIVATE ChordizerMidi juce::juce_audio_utils
+    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 
 juce_add_console_app(ChordizerNeuralSmokeTest PRODUCT_NAME "Chordizer Neural Smoke Test")
 juce_generate_juce_header(ChordizerNeuralSmokeTest)

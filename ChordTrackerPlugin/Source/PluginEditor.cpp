@@ -7,11 +7,11 @@
 
 namespace
 {
-juce::Colour background(0xff111416);
-juce::Colour panel(0xff1b2023);
-juce::Colour cyan(0xff38d6c7);
-juce::Colour playhead(0xffff5263);
-juce::Colour buttonSurface(0xff272d31);
+juce::Colour background=SongizerLogicLookAndFeel::window();
+juce::Colour panel=SongizerLogicLookAndFeel::panel();
+juce::Colour cyan=SongizerLogicLookAndFeel::blue();
+juce::Colour playhead=SongizerLogicLookAndFeel::red();
+juce::Colour buttonSurface=SongizerLogicLookAndFeel::raised();
 constexpr int headerHeight = 34;
 std::array<juce::Colour, 20> chordPalette {
     juce::Colour(0xff2dd4bf), juce::Colour(0xffffc857), juce::Colour(0xffff6b6b), juce::Colour(0xff60a5fa),
@@ -21,7 +21,7 @@ std::array<juce::Colour, 20> chordPalette {
     juce::Colour(0xfff97316), juce::Colour(0xff38bdf8), juce::Colour(0xffa3e635), juce::Colour(0xfff472b6)
 };
 
-constexpr int activePlayerSkinIndex = 0;
+constexpr int activePlayerSkinIndex = 9;
 
 float playerInterfacePhase()
 {
@@ -117,13 +117,12 @@ void drawPlayerTexture(juce::Graphics& graphics,juce::Rectangle<float> bounds,fl
 void drawPlayerFrame(juce::Graphics& graphics,juce::Rectangle<float> bounds,const juce::String& caption)
 {
     const auto corner=playerCorner();
-    graphics.setColour(juce::Colours::black.withAlpha(0.42f));graphics.fillRoundedRectangle(bounds.translated(0.0f,3.0f),corner);
-    graphics.setColour(panel);graphics.fillRoundedRectangle(bounds,corner);drawPlayerTexture(graphics,bounds.reduced(2.0f));
-    graphics.setColour(juce::Colours::white.withAlpha(0.25f));graphics.drawRoundedRectangle(bounds.reduced(0.5f),corner,1.0f);
+    graphics.setColour(panel);graphics.fillRoundedRectangle(bounds,4.0f);
+    graphics.setColour(SongizerLogicLookAndFeel::line().withAlpha(0.82f));graphics.drawRoundedRectangle(bounds.reduced(0.5f),4.0f,1.0f);
     auto display=bounds.reduced(6.0f,4.0f).removeFromTop(13.0f);
     graphics.setColour(background.darker(0.25f));graphics.fillRoundedRectangle(display,squarePlayerInterface()?0.0f:2.0f);
-    graphics.setColour(cyan.withAlpha(0.76f));graphics.drawRoundedRectangle(display,squarePlayerInterface()?0.0f:2.0f,1.0f);
-    graphics.setColour(cyan);graphics.setFont(juce::FontOptions(8.0f,juce::Font::bold));
+    graphics.setColour(SongizerLogicLookAndFeel::line());graphics.drawRoundedRectangle(display,3.0f,1.0f);
+    graphics.setColour(SongizerLogicLookAndFeel::muted());graphics.setFont(juce::FontOptions(9.0f));
     graphics.drawFittedText(caption,display.toNearestInt().reduced(4,0),juce::Justification::centredLeft,1);
 
 }
@@ -167,7 +166,7 @@ juce::PropertiesFile& globalSettings()
     static juce::PropertiesFile settings([]
     {
         juce::PropertiesFile::Options options;
-        options.applicationName="Chordizer";options.filenameSuffix="settings";options.folderName="Santismo";
+        options.applicationName="Chordizer";options.filenameSuffix="settings";options.folderName="Songizer";
         options.osxLibrarySubFolder="Application Support";return options;
     }());
     return settings;
@@ -187,10 +186,9 @@ void ChordizerIconButton::paintButton(juce::Graphics& graphics,bool highlighted,
     if(highlighted)fill=fill.brighter(0.10f);
     if(down)fill=fill.darker(0.12f);
     if(!isEnabled())fill=fill.withAlpha(0.35f);
-    graphics.setColour(juce::Colours::black.withAlpha(0.30f));graphics.fillRoundedRectangle(area.translated(0.0f,2.0f),3.0f);
-    graphics.setColour(fill);graphics.fillRoundedRectangle(area,3.0f);
-    graphics.setColour(cyan.withAlpha(0.74f));graphics.drawRoundedRectangle(area,3.0f,1.0f);
-    graphics.setColour(getToggleState()?juce::Colours::black
+    graphics.setColour(fill);graphics.fillRoundedRectangle(area,4.0f);
+    graphics.setColour((getToggleState()?cyan:SongizerLogicLookAndFeel::line()).withAlpha(0.90f));graphics.drawRoundedRectangle(area,4.0f,1.0f);
+    graphics.setColour(getToggleState()?juce::Colours::white
                                        :juce::Colours::white.withAlpha(isEnabled()?0.82f:0.32f));
     auto box=area.reduced(6.0f);const auto x=box.getX(),y=box.getY(),w=box.getWidth(),h=box.getHeight();
     const auto stroke=juce::PathStrokeType(1.7f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded);
@@ -298,6 +296,7 @@ void ChordizerIconButton::paintButton(juce::Graphics& graphics,bool highlighted,
 ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     : AudioProcessorEditor(&owner), chordProcessor(owner)
 {
+    setLookAndFeel(&logicLookAndFeel);
     timelineZoomBars = juce::jlimit(0.01, 256.0, chordProcessor.savedTimelineZoom());
     timelineScrollPpq = juce::jmax(0.0, chordProcessor.savedTimelineScroll());
     leadSheet = chordProcessor.savedLeadSheetView();
@@ -325,9 +324,9 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     }
     addAndMakeVisible(lockModeButton);
     lockModeButton.setColour(juce::TextButton::buttonColourId,buttonSurface);
-    lockModeButton.setColour(juce::TextButton::buttonOnColourId,cyan.withAlpha(0.78f));
+    lockModeButton.setColour(juce::TextButton::buttonOnColourId,cyan);
     lockModeButton.setColour(juce::TextButton::textColourOffId,juce::Colours::white.withAlpha(0.82f));
-    lockModeButton.setColour(juce::TextButton::textColourOnId,juce::Colours::black);
+    lockModeButton.setColour(juce::TextButton::textColourOnId,juce::Colours::white);
 
     viewButton.setTooltip(leadSheet?"Show Timeline view":"Show Lead Sheet view");
     leadZoomButton.setTooltip("Full-width Lead Sheet measures");
@@ -409,7 +408,10 @@ ChordTrackerEditor::ChordTrackerEditor(ChordTrackerProcessor& owner)
     startTimerHz(30);
 }
 
-ChordTrackerEditor::~ChordTrackerEditor() = default;
+ChordTrackerEditor::~ChordTrackerEditor()
+{
+    setLookAndFeel(nullptr);
+}
 
 void ChordTrackerEditor::updateScalizerControls()
 {

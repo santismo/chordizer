@@ -4,6 +4,7 @@
 #include "MacMidiDropBridge.h"
 #include "MidiImport.h"
 #include <optional>
+#include "../SongizerLogicLookAndFeel.h"
 
 class ChordizerIconButton final : public juce::Button
 {
@@ -86,6 +87,7 @@ private:
     void restoreRegions(const std::vector<ChordRegionData>& regions);
     bool handleChordEditorKey(const juce::KeyPress& key);
     ChordTrackerProcessor& chordProcessor;
+    SongizerLogicLookAndFeel logicLookAndFeel;
     ChordizerIconButton viewButton{ChordizerIconButton::Icon::view};
     ChordizerIconButton leadZoomButton{ChordizerIconButton::Icon::oneMeasure};
     ChordizerIconButton editButton{ChordizerIconButton::Icon::edit};

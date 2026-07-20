@@ -5,7 +5,7 @@ turn MIDI or audio into a synchronized, editable chord track.
 
 ## Download and install Chordizer (macOS)
 
-1. Download **`Chordizer-0.5.0-macos.zip`** from the [latest release](https://github.com/santismo/chordizer/releases/latest).
+1. Download **`Chordizer-2.0.0-macOS.zip`** from the [latest release](https://github.com/santismo/chordizer/releases/latest).
 2. Double-click the download to unpack `Chordizer.component`.
 3. In Finder, choose **Go > Go to Folder…**, enter `~/Library/Audio/Plug-Ins/Components`, then move `Chordizer.component` into that folder. Replace an older Chordizer component if Finder asks.
 4. Restart Logic Pro. In **Logic Pro > Settings > Plug-in Manager**, find **Santismo: Chordizer** and enable it if needed.

@@ -331,26 +331,31 @@ int ScalizerEngine::nearestAllowedNote(int note, const std::array<bool, 12>& all
 int ScalizerEngine::degreeMappedNote(int inputNote, const ScalizerScaleChoice& choice,
                                      const std::array<bool, 12>& allowed) noexcept
 {
-    // Treat consecutive chromatic input keys as consecutive allowed degrees.
-    // Anchoring input and output at the active tonic keeps the mapping stable
-    // across note attacks while avoiding the repeated steps produced by a
-    // nearest-note quantizer.
-    std::array<int,12> relativeIntervals {};
-    auto allowedCount=0;
-    for(int interval=0;interval<12;++interval)
+    // Treat the chromatic keyboard as consecutive performance degrees. Middle
+    // C is degree zero (the active root), C# is degree one, D is degree two,
+    // and so on. This keeps adjacent keys from collapsing onto the same pitch:
+    // in C major they produce C-D-E-F..., while C chord lock produces C-E-G-C...
+    std::array<int, 12> intervals {};
+    auto intervalCount = 0;
+    for(int semitones = 0; semitones < 12; ++semitones)
     {
-        const auto pitchClass=(choice.rootPitchClass+interval)%12;
-        if(allowed[(size_t)pitchClass])relativeIntervals[(size_t)allowedCount++]=interval;
+        const auto pitchClass = (choice.rootPitchClass + semitones) % 12;
+        if(allowed[(size_t)pitchClass]) intervals[(size_t)intervalCount++] = semitones;
     }
-    if(allowedCount==0)return inputNote;
+    if(intervalCount == 0) return inputNote;
 
-    const auto referenceTonic=60+choice.rootPitchClass;
-    const auto degreeOffset=inputNote-referenceTonic;
-    auto octaveOffset=degreeOffset/allowedCount;
-    auto degreeIndex=degreeOffset%allowedCount;
-    if(degreeIndex<0){degreeIndex+=allowedCount;--octaveOffset;}
-    const auto outputNote=referenceTonic+octaveOffset*12+relativeIntervals[(size_t)degreeIndex];
-    return juce::jlimit(0,127,outputNote);
+    auto rootNote = 60 + choice.rootPitchClass;
+    if(rootNote > 66) rootNote -= 12; // keep the active root closest to middle C
+
+    const auto degree = inputNote - 60;
+    auto octave = degree / intervalCount;
+    auto intervalIndex = degree % intervalCount;
+    if(intervalIndex < 0)
+    {
+        intervalIndex += intervalCount;
+        --octave;
+    }
+    return juce::jlimit(0, 127, rootNote + octave * 12 + intervals[(size_t)intervalIndex]);
 }
 
 int ScalizerEngine::diatonicHarmonyNote(int note, int degree, bool above,
